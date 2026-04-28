@@ -1,601 +1,510 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import {
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  SafeAreaView,
-  ScrollView,
-  StyleSheet,
+  View,
   Text,
   TextInput,
   TouchableOpacity,
-  View,
+  StyleSheet,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  ScrollView,
+  Platform,
+  Alert,
 } from "react-native";
-import * as WebBrowser from "expo-web-browser";
-import * as Google from "expo-auth-session/providers/google";
-import { GoogleAuthProvider, signInWithCredential } from "firebase/auth";
-import { Eye, EyeOff, HelpCircle, Lock, User } from "lucide-react-native";
-import { NativeStackScreenProps } from "@react-navigation/native-stack";
 
-import { auth, isFirebaseConfigured } from "../config/firebase";
-import { authClient } from "../services/authClient";
-import { CARD_SHADOW, COLORS, TYPOGRAPHY } from "../theme/luxiaTheme";
-import { RootStackParamList } from "../types/navigation";
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { User, Lock, Eye, EyeOff, HelpCircle } from "lucide-react-native";
+import { auth } from "../config/firebase";
 
-type LoginScreenProps = NativeStackScreenProps<RootStackParamList, "Login">;
+// GOOGLE LOGIN DESACTIVADO TEMPORALMENTE EN EXPO GO
+// import * as WebBrowser from "expo-web-browser";
+// import * as Google from "expo-auth-session/providers/google";
+// import {
+//   GoogleAuthProvider,
+//   signInWithCredential,
+// } from "firebase/auth";
 
-type LoginErrors = {
-  email?: string;
-  password?: string;
-  general?: string;
-};
+// WebBrowser.maybeCompleteAuthSession();
 
-WebBrowser.maybeCompleteAuthSession();
-
-const LoginScreen = ({ navigation }: LoginScreenProps) => {
+export default function LoginScreen({ navigation }: any) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
-  const [errors, setErrors] = useState<LoginErrors>({});
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
+
+  const [emailError, setEmailError] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+
+  const [isLoading, setIsLoading] = useState(false);
+
+  // GOOGLE LOGIN DESACTIVADO TEMPORALMENTE EN EXPO GO
+  /*
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+
   const [request, response, promptAsync] = Google.useAuthRequest({
     webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
-    responseType: "id_token",
+    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
   });
-
-  const clearError = (field: keyof LoginErrors) => {
-    setErrors((current) => ({
-      ...current,
-      [field]: undefined,
-      general: undefined,
-    }));
-  };
 
   useEffect(() => {
     const loginWithGoogle = async () => {
-      if (response?.type !== "success") {
-        return;
-      }
-
-      if (!isFirebaseConfigured || !auth) {
-        setErrors({
-          general:
-            "Firebase no está configurado correctamente para iniciar sesión con Google.",
-        });
-        setIsGoogleSubmitting(false);
-        return;
-      }
-
       try {
-        const idToken = response.params.id_token;
+        if (response?.type === "success") {
+          setIsGoogleLoading(true);
 
-        if (!idToken) {
-          throw new Error("Google no devolvió un token válido.");
+          const { id_token } = response.params;
+
+          if (!id_token) {
+            Alert.alert("Error", "No se pudo obtener el token de Google.");
+            return;
+          }
+
+          const credential = GoogleAuthProvider.credential(id_token);
+
+          await signInWithCredential(auth, credential);
+
+          navigation.replace("MainApp");
         }
-
-        const credential = GoogleAuthProvider.credential(idToken);
-        await signInWithCredential(auth, credential);
-        navigation.replace("MainApp");
-      } catch (error) {
-        setErrors({
-          general:
-            error instanceof Error
-              ? error.message
-              : "No se pudo iniciar sesión con Google. Intentá nuevamente.",
-        });
+      } catch (error: any) {
+        console.log("Google login error:", error);
+        Alert.alert(
+          "Error",
+          "No se pudo iniciar sesión con Google. Intentá nuevamente."
+        );
       } finally {
-        setIsGoogleSubmitting(false);
+        setIsGoogleLoading(false);
       }
     };
 
-    void loginWithGoogle();
-  }, [navigation, response]);
+    loginWithGoogle();
+  }, [response]);
+
+  const handleGoogleLogin = async () => {
+    try {
+      await promptAsync({ useProxy: true } as any);
+    } catch (error) {
+      console.log("Prompt Google error:", error);
+      Alert.alert("Error", "No se pudo abrir el inicio de sesión con Google.");
+    }
+  };
+  */
+
+  const getFirebaseErrorMessage = (code: string) => {
+    switch (code) {
+      case "auth/invalid-email":
+        return "El email no es válido";
+      case "auth/user-not-found":
+        return "No existe una cuenta con este email";
+      case "auth/wrong-password":
+        return "La contraseña es incorrecta";
+      case "auth/invalid-credential":
+        return "Credenciales inválidas";
+      default:
+        return "No se pudo iniciar sesión. Intentá nuevamente.";
+    }
+  };
 
   const validateForm = () => {
-    const nextErrors: LoginErrors = {};
-    const trimmedEmail = email.trim();
+    let isValid = true;
 
-    if (!trimmedEmail) {
-      nextErrors.email = "Ingresá tu usuario o email";
-    } else if (trimmedEmail.includes("@") && !/\S+@\S+\.\S+/.test(trimmedEmail)) {
-      nextErrors.email = "Ingresá un email válido";
+    setEmailError("");
+    setPasswordError("");
+
+    if (!email.trim()) {
+      setEmailError("Este campo es obligatorio");
+      isValid = false;
     }
 
     if (!password.trim()) {
-      nextErrors.password = "Ingresá tu contraseña";
+      setPasswordError("Este campo es obligatorio");
+      isValid = false;
     }
 
-    setErrors(nextErrors);
-    return Object.keys(nextErrors).length === 0;
+    return isValid;
   };
 
   const handleLogin = async () => {
-    if (isSubmitting || isGoogleSubmitting || !validateForm()) {
-      return;
-    }
-
-    setIsSubmitting(true);
-    setErrors({});
+    if (!validateForm()) return;
 
     try {
-      await authClient.login({
-        email: email.trim(),
-        password,
-        rememberMe,
-      });
+      setIsLoading(true);
+
+      await signInWithEmailAndPassword(auth, email.trim(), password);
 
       navigation.replace("MainApp");
-    } catch (error) {
-      setErrors({
-        general:
-          error instanceof Error
-            ? error.message
-            : "No se pudo iniciar sesión. Intentá nuevamente.",
-      });
+    } catch (error: any) {
+      Alert.alert("Error", getFirebaseErrorMessage(error.code));
     } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleGoogleLogin = async () => {
-    if (isSubmitting || isGoogleSubmitting) {
-      return;
-    }
-
-    if (!process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID) {
-      setErrors({
-        general:
-          "Falta configurar EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID para usar el acceso con Google.",
-      });
-      return;
-    }
-
-    setErrors({});
-    setIsGoogleSubmitting(true);
-
-    const result = await promptAsync();
-
-    if (result.type !== "success") {
-      setIsGoogleSubmitting(false);
-      if (result.type !== "dismiss" && result.type !== "cancel") {
-        setErrors({ general: "No se pudo completar el acceso con Google." });
-      }
+      setIsLoading(false);
     }
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={styles.keyboardAvoidingView}
+    <KeyboardAvoidingView
+      style={styles.keyboardView}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
+      <ScrollView
+        contentContainerStyle={styles.scrollContainer}
+        keyboardShouldPersistTaps="handled"
       >
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.container}>
-            <View style={styles.card}>
+        <View style={styles.container}>
+          <View style={styles.card}>
+            <View style={styles.header}>
               <Text style={styles.title}>Iniciar sesión</Text>
               <Text style={styles.subtitle}>
                 Accedé a tu cuenta para continuar en la plataforma judicial
               </Text>
-
-              <View style={styles.googleSection}>
-                <TouchableOpacity
-                  activeOpacity={0.9}
-                  disabled={!request || isSubmitting || isGoogleSubmitting}
-                  onPress={handleGoogleLogin}
-                  style={[
-                    styles.googleButton,
-                    !request || isSubmitting || isGoogleSubmitting
-                      ? styles.googleButtonDisabled
-                      : undefined,
-                  ]}
-                >
-                  {isGoogleSubmitting ? (
-                    <View style={styles.googleButtonContent}>
-                      <ActivityIndicator color={COLORS.primary} size="small" />
-                      <Text style={styles.googleButtonText}>Conectando...</Text>
-                    </View>
-                  ) : (
-                    <View style={styles.googleButtonContent}>
-                      <View style={styles.googleBadge}>
-                        <Text style={styles.googleBadgeText}>G</Text>
-                      </View>
-                      <Text style={styles.googleButtonText}>Iniciar sesión con Google</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-                <Text style={styles.googleHint}>
-                  Acceso rápido con tu cuenta de Google
-                </Text>
-              </View>
-
-              <View style={styles.form}>
-                <View style={styles.fieldBlock}>
-                  <Text style={styles.label}>Usuario</Text>
-                  <View
-                    style={[
-                      styles.inputWrapper,
-                      errors.email ? styles.inputWrapperError : undefined,
-                    ]}
-                  >
-                    <User size={18} color={COLORS.textSecondary} />
-                    <TextInput
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      keyboardType="email-address"
-                      onChangeText={(value: string) => {
-                        setEmail(value);
-                        clearError("email");
-                      }}
-                      placeholder="Ingresá tu usuario"
-                      placeholderTextColor={COLORS.textMuted}
-                      returnKeyType="next"
-                      style={styles.input}
-                      textContentType="username"
-                      value={email}
-                    />
-                  </View>
-                  {errors.email ? (
-                    <Text style={styles.errorText}>{errors.email}</Text>
-                  ) : null}
-                </View>
-
-                <View style={styles.fieldBlock}>
-                  <Text style={styles.label}>Contraseña</Text>
-                  <View
-                    style={[
-                      styles.inputWrapper,
-                      errors.password ? styles.inputWrapperError : undefined,
-                    ]}
-                  >
-                    <Lock size={18} color={COLORS.textSecondary} />
-                    <TextInput
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      onChangeText={(value: string) => {
-                        setPassword(value);
-                        clearError("password");
-                      }}
-                      onSubmitEditing={handleLogin}
-                      placeholder="Ingresá tu contraseña"
-                      placeholderTextColor={COLORS.textMuted}
-                      returnKeyType="done"
-                      secureTextEntry={!showPassword}
-                      style={styles.input}
-                      textContentType="password"
-                      value={password}
-                    />
-                    <Pressable
-                      accessibilityRole="button"
-                      hitSlop={8}
-                      onPress={() => setShowPassword((current: boolean) => !current)}
-                      style={styles.trailingButton}
-                    >
-                      {showPassword ? (
-                        <EyeOff size={18} color={COLORS.textSecondary} />
-                      ) : (
-                        <Eye size={18} color={COLORS.textSecondary} />
-                      )}
-                    </Pressable>
-                  </View>
-                  {errors.password ? (
-                    <Text style={styles.errorText}>{errors.password}</Text>
-                  ) : null}
-                </View>
-
-                <Pressable
-                  accessibilityRole="checkbox"
-                  onPress={() => setRememberMe((current: boolean) => !current)}
-                  style={styles.checkboxRow}
-                >
-                  <View
-                    style={[
-                      styles.checkboxBox,
-                      rememberMe ? styles.checkboxBoxActive : undefined,
-                    ]}
-                  >
-                    {rememberMe ? <Text style={styles.checkboxMark}>✓</Text> : null}
-                  </View>
-                  <Text style={styles.checkboxText}>Recordarme</Text>
-                </Pressable>
-
-                {errors.general ? (
-                  <View style={styles.messageBox}>
-                    <Text style={styles.errorText}>{errors.general}</Text>
-                  </View>
-                ) : null}
-
-                <TouchableOpacity
-                  activeOpacity={0.9}
-                  disabled={isSubmitting || isGoogleSubmitting}
-                  onPress={handleLogin}
-                  style={[
-                    styles.primaryButton,
-                    isSubmitting ? styles.primaryButtonDisabled : undefined,
-                  ]}
-                >
-                  {isSubmitting ? (
-                    <View style={styles.loadingRow}>
-                      <ActivityIndicator color={COLORS.white} size="small" />
-                      <Text style={styles.primaryButtonText}>INGRESANDO...</Text>
-                    </View>
-                  ) : (
-                    <Text style={styles.primaryButtonText}>INGRESAR</Text>
-                  )}
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  onPress={() => navigation.navigate("ForgotPassword")}
-                  style={styles.centerLink}
-                >
-                  <Text style={styles.linkText}>Olvidé la contraseña</Text>
-                </TouchableOpacity>
-
-                <View style={styles.divider} />
-
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  onPress={() => navigation.navigate("HelpAccess")}
-                  style={styles.helpLinkButton}
-                >
-                  <HelpCircle size={16} color={COLORS.textSecondary} />
-                  <Text style={styles.helpLinkText}>¿Necesitás ayuda para acceder?</Text>
-                </TouchableOpacity>
-              </View>
             </View>
 
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={() => navigation.navigate("Register")}
-              style={styles.footerLink}
-            >
-              <Text style={styles.footerText}>
-                ¿No tenés cuenta?{" "}
-                <Text style={styles.footerLinkText}>Registrate aquí</Text>
-              </Text>
+            <View style={styles.form}>
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Usuario</Text>
+
+                <View
+                  style={[
+                    styles.inputWrapper,
+                    emailError ? styles.inputError : null,
+                  ]}
+                >
+                  <User size={20} color="#5B6776" style={styles.icon} />
+
+                  <TextInput
+                    value={email}
+                    onChangeText={setEmail}
+                    placeholder="Ingresá tu email"
+                    placeholderTextColor="#5B6776"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    style={styles.input}
+                  />
+                </View>
+
+                {emailError ? (
+                  <Text style={styles.errorText}>{emailError}</Text>
+                ) : null}
+              </View>
+
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Contraseña</Text>
+
+                <View
+                  style={[
+                    styles.inputWrapper,
+                    passwordError ? styles.inputError : null,
+                  ]}
+                >
+                  <Lock size={20} color="#5B6776" style={styles.icon} />
+
+                  <TextInput
+                    value={password}
+                    onChangeText={setPassword}
+                    placeholder="Ingresá tu contraseña"
+                    placeholderTextColor="#5B6776"
+                    secureTextEntry={!showPassword}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    style={styles.input}
+                  />
+
+                  <TouchableOpacity
+                    onPress={() => setShowPassword(!showPassword)}
+                    style={styles.eyeButton}
+                  >
+                    {showPassword ? (
+                      <EyeOff size={20} color="#5B6776" />
+                    ) : (
+                      <Eye size={20} color="#5B6776" />
+                    )}
+                  </TouchableOpacity>
+                </View>
+
+                {passwordError ? (
+                  <Text style={styles.errorText}>{passwordError}</Text>
+                ) : null}
+              </View>
+
+              <TouchableOpacity
+                style={styles.rememberRow}
+                onPress={() => setRememberMe(!rememberMe)}
+              >
+                <View
+                  style={[
+                    styles.checkbox,
+                    rememberMe ? styles.checkboxActive : null,
+                  ]}
+                >
+                  {rememberMe ? <Text style={styles.checkText}>✓</Text> : null}
+                </View>
+
+                <Text style={styles.rememberText}>Recordarme</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.loginButton,
+                  isLoading ? styles.buttonDisabled : null,
+                ]}
+                onPress={handleLogin}
+                disabled={isLoading}
+              >
+                {isLoading ? (
+                  <View style={styles.loadingRow}>
+                    <ActivityIndicator color="#FFFFFF" size="small" />
+                    <Text style={styles.loginButtonText}>Ingresando...</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.loginButtonText}>INGRESAR</Text>
+                )}
+              </TouchableOpacity>
+
+              {/*
+              BOTÓN GOOGLE DESACTIVADO TEMPORALMENTE EN EXPO GO
+
+              <TouchableOpacity
+                style={[
+                  styles.googleButton,
+                  !request || isGoogleLoading
+                    ? styles.googleButtonDisabled
+                    : null,
+                ]}
+                onPress={handleGoogleLogin}
+                disabled={!request || isGoogleLoading}
+              >
+                {isGoogleLoading ? (
+                  <ActivityIndicator color="#1E2A36" size="small" />
+                ) : (
+                  <Text style={styles.googleButtonText}>
+                    Continuar con Google
+                  </Text>
+                )}
+              </TouchableOpacity>
+              */}
+
+              <TouchableOpacity
+                onPress={() => navigation.navigate("ForgotPassword")}
+              >
+                <Text style={styles.forgotText}>Olvidé la contraseña</Text>
+              </TouchableOpacity>
+
+              <View style={styles.divider} />
+
+              <TouchableOpacity style={styles.helpButton}>
+                <HelpCircle size={16} color="#5B6776" />
+                <Text style={styles.helpText}>
+                  ¿Necesitás ayuda para acceder?
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <View style={styles.registerContainer}>
+            <Text style={styles.registerText}>¿No tenés cuenta? </Text>
+            <TouchableOpacity onPress={() => navigation.navigate("Register")}>
+              <Text style={styles.registerLink}>Registrate aquí</Text>
             </TouchableOpacity>
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
-};
+}
 
 const styles = StyleSheet.create({
-  safeArea: {
+  keyboardView: {
     flex: 1,
-    backgroundColor: COLORS.background,
+    backgroundColor: "#F3F5F7",
   },
-  keyboardAvoidingView: {
-    flex: 1,
-  },
-  scrollContent: {
+  scrollContainer: {
     flexGrow: 1,
   },
   container: {
-    flexGrow: 1,
-    alignItems: "center",
+    flex: 1,
+    backgroundColor: "#F3F5F7",
     justifyContent: "center",
-    paddingHorizontal: 18,
-    paddingVertical: 24,
-    backgroundColor: COLORS.background,
+    paddingHorizontal: 24,
+    paddingVertical: 48,
   },
   card: {
     width: "100%",
-    maxWidth: 520,
-    backgroundColor: COLORS.card,
-    borderRadius: 22,
-    borderWidth: 1.5,
-    borderColor: COLORS.gold,
-    paddingHorizontal: 22,
-    paddingVertical: 28,
-    ...CARD_SHADOW,
+    backgroundColor: "#FBFBFC",
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: "#C4A77D",
+    padding: 28,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 6,
+    },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  header: {
+    alignItems: "center",
+    marginBottom: 30,
   },
   title: {
-    color: COLORS.primary,
-    fontSize: 26,
-    fontFamily: TYPOGRAPHY.serif,
+    color: "#1E2A36",
+    fontSize: 30,
     fontWeight: "700",
-    textAlign: "center",
+    marginBottom: 8,
   },
   subtitle: {
-    marginTop: 10,
-    marginBottom: 18,
-    color: COLORS.textSecondary,
-    fontSize: 15,
-    lineHeight: 22,
+    color: "#5B6776",
+    fontSize: 14,
     textAlign: "center",
-  },
-  googleSection: {
-    marginBottom: 18,
-    gap: 8,
+    lineHeight: 20,
   },
   form: {
-    gap: 16,
+    gap: 18,
   },
-  fieldBlock: {
+  inputGroup: {
     gap: 8,
   },
   label: {
-    color: COLORS.text,
+    color: "#1E2A36",
     fontSize: 14,
     fontWeight: "700",
   },
   inputWrapper: {
-    minHeight: 54,
+    height: 52,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 2,
+    borderColor: "#C4A77D",
+    borderRadius: 10,
     flexDirection: "row",
     alignItems: "center",
-    borderWidth: 1.5,
-    borderColor: COLORS.gold,
-    borderRadius: 14,
-    backgroundColor: COLORS.card,
-    paddingHorizontal: 14,
-    gap: 10,
+    paddingHorizontal: 12,
   },
-  inputWrapperError: {
-    borderColor: COLORS.error,
+  inputError: {
+    borderColor: "#EF4444",
+  },
+  icon: {
+    marginRight: 10,
   },
   input: {
     flex: 1,
-    color: COLORS.text,
+    color: "#1E2A36",
     fontSize: 15,
-    paddingVertical: Platform.OS === "ios" ? 14 : 10,
   },
-  trailingButton: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  checkboxRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginTop: 2,
-  },
-  checkboxBox: {
-    width: 18,
-    height: 18,
-    borderWidth: 1.4,
-    borderColor: COLORS.textSecondary,
-    borderRadius: 3,
-    backgroundColor: COLORS.card,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  checkboxBoxActive: {
-    borderColor: COLORS.primary,
-    backgroundColor: COLORS.primary,
-  },
-  checkboxMark: {
-    color: COLORS.white,
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  checkboxText: {
-    color: COLORS.textSecondary,
-    fontSize: 14,
-  },
-  messageBox: {
-    borderWidth: 1,
-    borderColor: "#F0C6C0",
-    borderRadius: 14,
-    backgroundColor: "#FFF5F4",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+  eyeButton: {
+    padding: 4,
   },
   errorText: {
-    color: COLORS.error,
-    fontSize: 13,
-    lineHeight: 18,
+    color: "#EF4444",
+    fontSize: 12,
   },
-  primaryButton: {
-    minHeight: 54,
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: COLORS.primary,
-    ...CARD_SHADOW,
-  },
-  primaryButtonDisabled: {
-    opacity: 0.82,
-    backgroundColor: COLORS.primaryHover,
-  },
-  primaryButtonText: {
-    color: COLORS.white,
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  googleButton: {
-    minHeight: 54,
-    width: "100%",
-    borderRadius: 14,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: COLORS.white,
-    borderWidth: 1.5,
-    borderColor: COLORS.gold,
-  },
-  googleButtonDisabled: {
-    opacity: 0.7,
-  },
-  googleButtonContent: {
+  rememberRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
   },
-  googleBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: "#F3F5F7",
+  checkbox: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: "#C4A77D",
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: COLORS.divider,
+    backgroundColor: "#FFFFFF",
   },
-  googleBadgeText: {
-    color: COLORS.primary,
-    fontSize: 16,
+  checkboxActive: {
+    backgroundColor: "#123A67",
+    borderColor: "#123A67",
+  },
+  checkText: {
+    color: "#FFFFFF",
+    fontSize: 12,
     fontWeight: "700",
   },
-  googleButtonText: {
-    color: COLORS.primary,
-    fontSize: 15,
-    fontWeight: "700",
+  rememberText: {
+    marginLeft: 8,
+    color: "#5B6776",
+    fontSize: 14,
   },
-  googleHint: {
-    color: COLORS.textSecondary,
-    fontSize: 13,
-    textAlign: "center",
+  loginButton: {
+    height: 54,
+    backgroundColor: "#123A67",
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 3,
+    },
+    shadowOpacity: 0.18,
+    shadowRadius: 5,
+    elevation: 4,
+  },
+  buttonDisabled: {
+    backgroundColor: "#5B6776",
   },
   loadingRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: 8,
   },
-  centerLink: {
-    alignItems: "center",
-    marginTop: 4,
-  },
-  linkText: {
-    color: COLORS.primary,
+  loginButtonText: {
+    color: "#FFFFFF",
     fontSize: 14,
-    fontWeight: "500",
+    fontWeight: "700",
+  },
+  googleButton: {
+    height: 52,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: "#C4A77D",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  googleButtonDisabled: {
+    opacity: 0.6,
+  },
+  googleButtonText: {
+    color: "#1E2A36",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  forgotText: {
+    color: "#1E4F88",
+    fontSize: 14,
+    fontWeight: "600",
+    textAlign: "center",
   },
   divider: {
     height: 1,
-    backgroundColor: COLORS.divider,
-    marginTop: 4,
+    backgroundColor: "#D6DCE5",
+    marginTop: 2,
   },
-  helpLinkButton: {
+  helpButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
+    gap: 6,
   },
-  helpLinkText: {
-    color: COLORS.textSecondary,
+  helpText: {
+    color: "#5B6776",
+    fontSize: 12,
+  },
+  registerContainer: {
+    marginTop: 24,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  registerText: {
+    color: "#5B6776",
     fontSize: 14,
   },
-  footerLink: {
-    marginTop: 24,
-  },
-  footerText: {
-    color: COLORS.textSecondary,
-    fontSize: 15,
-    textAlign: "center",
-  },
-  footerLinkText: {
-    color: COLORS.primary,
+  registerLink: {
+    color: "#1E4F88",
+    fontSize: 14,
     fontWeight: "700",
   },
 });
-
-export default LoginScreen;

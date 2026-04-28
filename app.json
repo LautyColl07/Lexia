@@ -1,5 +1,11 @@
 {
   "plugins": [
     "expo-web-browser"
-  ]
+  ],
+  "android": {
+    "package": "com.anonymous.luxia"
+  },
+  "expo": {
+    "slug": "lexia"
+}
 }

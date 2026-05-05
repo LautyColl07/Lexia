@@ -7,15 +7,23 @@ import { getUserDisplayName, getUserEmail, getUserRole } from '../utils/userDisp
 
 export const USE_MOCKS = false;
 
-const API_BASE_URL = (
+const DEFAULT_API_BASE_URL = 'http://172.16.4.48:3000/api/v1';
+const DASHBOARD_RESUMEN_ENDPOINT = '/dashboard/resumen';
+
+export const API_BASE_URL = (
   process.env.EXPO_PUBLIC_API_BASE_URL ||
   Constants.expoConfig?.extra?.apiBaseUrl ||
-  ''
+  DEFAULT_API_BASE_URL
 ).replace(/\/+$/, '');
+
+export const FILE_BASE_URL = API_BASE_URL.replace(/\/api\/v1$/, '');
 
 let authToken = null;
 let mockStore = JSON.parse(JSON.stringify(mockData));
 const REQUEST_TIMEOUT_MS = 8000;
+const EXPIRED_SESSION_MESSAGE = 'Tu sesión expiró. Iniciá sesión nuevamente.';
+const MISSING_SESSION_MESSAGE = 'No hay una sesión activa. Iniciá sesión nuevamente.';
+const PROTECTED_ENDPOINT_PREFIXES = ['/dashboard/resumen', '/causas', '/audiencias', '/documentos'];
 
 function simulateDelay(result, ms = 450) {
   return new Promise((resolve) => {
@@ -406,16 +414,16 @@ function createRequestError(message, status = 0, data = null) {
 }
 
 function getErrorMessage(status, data) {
+  if (status === 401 || status === 403) {
+    return EXPIRED_SESSION_MESSAGE;
+  }
+
   if (typeof data === 'string' && data.trim()) {
     return data;
   }
 
   if (data?.message) {
     return data.message;
-  }
-
-  if (status === 401 || status === 403) {
-    return 'La sesion actual no tiene permisos para completar esta accion. Volve a ingresar e intentalo nuevamente.';
   }
 
   if (status >= 500) {
@@ -425,30 +433,88 @@ function getErrorMessage(status, data) {
   return 'No pudimos completar la solicitud. Intenta nuevamente.';
 }
 
+function isProtectedEndpoint(path) {
+  return PROTECTED_ENDPOINT_PREFIXES.some((prefix) => path === prefix || path.startsWith(prefix + '/'));
+}
+
+async function getRequestAuthHeaders(path, customHeaders = {}) {
+  const hasAuthorizationHeader = Object.keys(customHeaders).some(
+    (key) => key.toLowerCase() === 'authorization'
+  );
+
+  if (hasAuthorizationHeader) {
+    return {
+      headers: {},
+      token: null,
+    };
+  }
+
+  if (!isProtectedEndpoint(path)) {
+    return {
+      headers: getAuthHeaders(),
+      token: authToken,
+    };
+  }
+
+  const currentUser = auth?.currentUser;
+
+  if (!currentUser) {
+    throw createRequestError(MISSING_SESSION_MESSAGE, 401);
+  }
+
+  try {
+    const token = await currentUser.getIdToken();
+
+    if (!token) {
+      throw createRequestError(MISSING_SESSION_MESSAGE, 401);
+    }
+
+    setAuthToken(token);
+    return {
+      headers: { Authorization: `Bearer ${token}` },
+      token,
+    };
+  } catch (error) {
+    if (error?.status) {
+      throw error;
+    }
+
+    setAuthToken(null);
+    throw createRequestError(EXPIRED_SESSION_MESSAGE, 401, error);
+  }
+}
+
 export async function request(endpoint, options = {}) {
   if (!API_BASE_URL) {
     throw new Error('Defini EXPO_PUBLIC_API_BASE_URL para usar la API real.');
   }
 
   const path = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
+  const url = API_BASE_URL + path;
   const hasJsonBody =
     options.body !== undefined &&
     options.body !== null &&
     !(options.body instanceof FormData) &&
     typeof options.body !== 'string';
   const body = hasJsonBody ? JSON.stringify(options.body) : options.body;
+  console.log('[API] endpoint:', endpoint);
+  console.log('[API] url:', url);
+  console.log('[API] currentUser uid:', auth.currentUser?.uid || null);
+  const { headers: authHeaders, token } = await getRequestAuthHeaders(path, options.headers);
+  console.log('[API] token presente:', Boolean(token));
 
   let response;
+  let responseText = '';
 
   try {
     response = await runWithTimeout(
-      fetch(API_BASE_URL + path, {
+      fetch(url, {
         ...options,
         body,
         headers: {
           Accept: 'application/json',
           ...(body !== undefined && body !== null && !(body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
-          ...getAuthHeaders(),
+          ...authHeaders,
           ...options.headers,
         },
       }),
@@ -464,10 +530,15 @@ export async function request(endpoint, options = {}) {
   }
 
   if (response.status === 204) {
+    console.log('[API] status:', response.status);
+    console.log('[API] response:', responseText);
     return null;
   }
 
   const rawText = await response.text();
+  responseText = rawText;
+  console.log('[API] status:', response.status);
+  console.log('[API] response:', responseText);
   let data = null;
 
   if (rawText) {
@@ -491,6 +562,32 @@ export function setAuthToken(token) {
 
 export function getAuthHeaders() {
   return authToken ? { Authorization: `Bearer ${authToken}` } : {};
+}
+
+export async function getCurrentIdToken() {
+  const currentUser = auth?.currentUser;
+
+  if (!currentUser) {
+    throw createRequestError(MISSING_SESSION_MESSAGE, 401);
+  }
+
+  try {
+    const token = await currentUser.getIdToken();
+
+    if (!token) {
+      throw createRequestError(MISSING_SESSION_MESSAGE, 401);
+    }
+
+    setAuthToken(token);
+    return token;
+  } catch (error) {
+    if (error?.status) {
+      throw error;
+    }
+
+    setAuthToken(null);
+    throw createRequestError(EXPIRED_SESSION_MESSAGE, 401, error);
+  }
 }
 
 export async function getMe() {
@@ -521,7 +618,7 @@ export async function getDashboardResumen() {
     });
   }
 
-  const data = await request('/dashboard/resumen');
+  const data = await request(DASHBOARD_RESUMEN_ENDPOINT);
   return normalizeDashboardResumen(data);
 }
 
@@ -566,7 +663,14 @@ export async function getCaseById(id) {
   ]);
 
   const caseHearings = hasHearings ? normalizedCase.hearings : hearings.filter((item) => item.caseId === normalizedCase.id);
-  const caseDocuments = hasDocuments ? normalizedCase.documents : documents.filter((item) => item.caseId === normalizedCase.id);
+  const caseHearingIds = new Set(caseHearings.map((item) => String(item?.id)).filter(Boolean));
+  const caseDocuments = hasDocuments
+    ? normalizedCase.documents
+    : documents.filter(
+        (item) =>
+          item.caseId === normalizedCase.id ||
+          caseHearingIds.has(String(item?.hearingId ?? item?.audienciaId ?? ''))
+      );
 
   return {
     ...normalizedCase,
@@ -778,30 +882,74 @@ export async function uploadDocument(data) {
   if (USE_MOCKS) {
     const nextId = Math.max(0, ...mockStore.documents.map((item) => item.id)) + 1;
     const hearing = mockStore.hearings.find((item) => item.id === Number(data.hearingId));
+    const asset = data?.asset || null;
+    const mockFileName =
+      data.fileName ??
+      data.nombreArchivo ??
+      asset?.name ??
+      `documento-${Date.now()}.pdf`;
     const newDocument = normalizeDocument({
       id: nextId,
       hearingId: data.hearingId,
       caseId: hearing?.caseId || null,
-      fileName: data.fileName ?? data.nombreArchivo,
-      documentType: data.documentType ?? data.tipo,
+      fileName: mockFileName,
+      documentType: data.documentType ?? data.tipo ?? 'Documento',
       uploadedAt: new Date().toISOString(),
-      path: data.path ?? `/uploads/${safeString(data.fileName ?? data.nombreArchivo, 'documento-simulado.pdf')}`,
+      path: data.path ?? `/uploads/${safeString(mockFileName, 'documento-simulado.pdf')}`,
     });
 
     mockStore.documents = [newDocument, ...mockStore.documents];
     return simulateDelay(newDocument);
   }
 
-  const payload = normalizeDocumentPayload(data);
-  const response = await request('/documentos', { method: 'POST', body: payload });
+  const asset = data?.asset || null;
+  const hearingId = safeString(data?.hearingId ?? data?.audienciaId, '').trim();
+  const documentType = safeString(data?.documentType ?? data?.tipo, '').trim();
+  const baseName = safeString(data?.baseName ?? data?.nombreBase, '').trim();
+
+  if (!asset?.uri || !hearingId) {
+    throw createRequestError('Selecciona una audiencia y un archivo valido para continuar.', 400);
+  }
+
+  const formData = new FormData();
+  formData.append('hearingId', String(hearingId));
+  if (documentType) {
+    formData.append('documentType', documentType);
+  }
+  if (baseName) {
+    formData.append('baseName', baseName);
+  }
+  formData.append('file', {
+    uri: asset.uri,
+    name: asset.name || `documento-${Date.now()}.pdf`,
+    type: asset.mimeType || 'application/octet-stream',
+  });
+  const payload = await request('/documentos', { method: 'POST', body: formData });
+
+  await getDocuments().catch(() => []);
+
+  if (!payload) {
+    return null;
+  }
 
   return normalizeDocument({
-    ...response,
-    fileName: response?.fileName ?? payload.fileName,
-    path: response?.path ?? payload.path,
-    hearingId: response?.hearingId ?? payload.hearingId,
-    documentType: response?.documentType ?? payload.documentType,
+    ...payload,
+    hearingId: payload?.hearingId ?? payload?.audienciaId ?? hearingId,
+    fileName: payload?.fileName ?? payload?.nombreArchivo ?? asset.name,
+    documentType: payload?.documentType ?? payload?.tipo ?? documentType,
   });
+}
+
+export async function transcribeDocument(documentId) {
+  if (USE_MOCKS) {
+    return simulateDelay({
+      success: true,
+      transcript: 'Transcripcion simulada disponible para esta audiencia.',
+      transcriptFilePath: `/uploads/transcripts/documento-${documentId}.txt`,
+    });
+  }
+
+  return request(`/documentos/${documentId}/transcribir`, { method: 'POST' });
 }
 
 export async function getNotifications() {

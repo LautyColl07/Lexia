@@ -1,5 +1,6 @@
+import * as DocumentPicker from 'expo-document-picker';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
@@ -18,10 +19,9 @@ export default function UploadDocumentScreen({ navigation }) {
   const [loadingHearings, setLoadingHearings] = useState(true);
   const [hearingsError, setHearingsError] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [selectedFile, setSelectedFile] = useState('');
+  const [selectedAsset, setSelectedAsset] = useState(null);
   const [form, setForm] = useState({
     hearingId: '',
-    fileName: '',
     documentType: 'Escrito',
   });
 
@@ -53,20 +53,43 @@ export default function UploadDocumentScreen({ navigation }) {
 
   const updateField = (key, value) => setForm((current) => ({ ...current, [key]: value }));
 
-  const handleSelectFile = () => {
-    const fileLabel = `documento_${Date.now()}.pdf`;
-    setSelectedFile(fileLabel);
-    if (!form.fileName) {
-      updateField('fileName', fileLabel);
+  const handleSelectFile = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        copyToCacheDirectory: true,
+        multiple: false,
+        type: [
+          'application/pdf',
+          'image/*',
+          'application/msword',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        ],
+      });
+
+      if (result.canceled) {
+        return;
+      }
+
+      const asset = result.assets?.[0] || null;
+
+      if (!asset?.uri) {
+        Alert.alert('Archivo invalido', 'No pudimos leer el archivo seleccionado.');
+        return;
+      }
+
+      setSelectedAsset(asset);
+      Alert.alert('Archivo seleccionado', `${asset.name || 'Documento'} quedo listo para subirse.`);
+    } catch (error) {
+      console.error('[UploadDocumentScreen] Error seleccionando archivo:', error);
+      Alert.alert('No se pudo seleccionar el archivo', 'Intenta nuevamente.');
     }
-    Alert.alert('Archivo seleccionado', `${fileLabel} quedo listo para registrarse.`);
   };
 
   const handleUpload = async () => {
-    if (!form.hearingId || !form.fileName.trim()) {
+    if (!form.hearingId || !selectedAsset?.uri) {
       Alert.alert(
         'Informacion incompleta',
-        'Selecciona una audiencia y define el nombre del archivo para continuar.'
+        'Selecciona una audiencia y un archivo para continuar.'
       );
       return;
     }
@@ -75,9 +98,8 @@ export default function UploadDocumentScreen({ navigation }) {
       setSubmitting(true);
       await uploadDocument({
         hearingId: form.hearingId,
-        fileName: form.fileName.trim(),
         documentType: form.documentType,
-        localUri: selectedFile || 'archivo_simulado.pdf',
+        asset: selectedAsset,
       });
 
       showSuccessAndGoBack(
@@ -88,8 +110,8 @@ export default function UploadDocumentScreen({ navigation }) {
     } catch (error) {
       console.error('[UploadDocumentScreen] Error subiendo documento:', error);
       Alert.alert(
-        'No pudimos registrar el documento',
-        error instanceof Error ? error.message : 'Intenta nuevamente.'
+        'No se pudo subir el documento.',
+        error instanceof Error ? error.message : 'No se pudo subir el documento.'
       );
     } finally {
       setSubmitting(false);
@@ -156,16 +178,6 @@ export default function UploadDocumentScreen({ navigation }) {
         </View>
       </Field>
 
-      <Field label="Nombre del archivo" styles={styles}>
-        <TextInput
-          onChangeText={(value) => updateField('fileName', value)}
-          placeholder="Ej. contestacion_demanda.pdf"
-          placeholderTextColor={colors.textMuted}
-          style={styles.input}
-          value={form.fileName}
-        />
-      </Field>
-
       <Field label="Tipo de documento" styles={styles}>
         <View style={styles.optionRow}>
           {DOCUMENT_TYPES.map((option) => (
@@ -183,7 +195,9 @@ export default function UploadDocumentScreen({ navigation }) {
       </Field>
 
       <Pressable onPress={handleSelectFile} style={styles.secondaryButton}>
-        <Text style={styles.secondaryButtonText}>Seleccionar archivo</Text>
+        <Text style={styles.secondaryButtonText}>
+          {selectedAsset?.name ? 'Cambiar archivo' : 'Seleccionar archivo'}
+        </Text>
       </Pressable>
 
       {selectedHearing ? (
@@ -195,7 +209,7 @@ export default function UploadDocumentScreen({ navigation }) {
             Fecha: {formatDateTime(selectedHearing?.date)}
           </Text>
           <Text style={styles.summaryText}>
-            Archivo: {selectedFile || form.fileName || 'Pendiente de seleccion'}
+            Archivo: {selectedAsset?.name || 'Pendiente de seleccion'}
           </Text>
         </View>
       ) : null}
@@ -206,7 +220,7 @@ export default function UploadDocumentScreen({ navigation }) {
         style={[styles.submitButton, submitting && styles.submitButtonDisabled]}
       >
         <Text style={styles.submitButtonText}>
-          {submitting ? 'Guardando cambios...' : 'Guardar documento'}
+          {submitting ? 'Subiendo...' : 'Guardar documento'}
         </Text>
       </Pressable>
     </ScrollView>
@@ -279,21 +293,6 @@ const createStyles = (colors) => StyleSheet.create({
   },
   selectorMetaActive: {
     color: colors.primary,
-  },
-  input: {
-    backgroundColor: colors.inputBackground,
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    color: colors.text,
-    fontSize: 15,
-    shadowColor: colors.shadow,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-    elevation: 2,
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
   },
   optionRow: {
     flexDirection: 'row',

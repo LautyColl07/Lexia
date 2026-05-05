@@ -9,14 +9,13 @@ import HearingTimelineCard from '../components/HearingTimelineCard';
 import LoadingState from '../components/LoadingState';
 import MetricCard from '../components/MetricCard';
 import QuickActionButton from '../components/QuickActionButton';
-import { useAppTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
+import { useAppTheme } from '../context/ThemeContext';
 import { getDashboardResumen, getNotifications } from '../services/api';
-import { getUserDisplayName } from '../utils/userDisplay';
 
 export default function DashboardScreen({ navigation }) {
   const { colors } = useAppTheme();
-  const { currentUser } = useAuth();
+  const { currentUser, isAuthReady } = useAuth();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [dashboard, setDashboard] = useState(null);
   const [notificationCount, setNotificationCount] = useState(0);
@@ -25,6 +24,19 @@ export default function DashboardScreen({ navigation }) {
   const [error, setError] = useState('');
 
   const loadDashboard = useCallback(async (isRefresh = false) => {
+    if (!isAuthReady) {
+      return;
+    }
+
+    if (!currentUser) {
+      setDashboard(null);
+      setNotificationCount(0);
+      setError('No hay una sesión activa. Iniciá sesión nuevamente.');
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+
     try {
       if (isRefresh) {
         setRefreshing(true);
@@ -50,12 +62,17 @@ export default function DashboardScreen({ navigation }) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [currentUser, isAuthReady]);
 
   useFocusEffect(
     useCallback(() => {
+      if (!isAuthReady) {
+        return undefined;
+      }
+
       void loadDashboard();
-    }, [loadDashboard])
+      return undefined;
+    }, [isAuthReady, loadDashboard])
   );
 
   const handleRefresh = useCallback(() => {
@@ -68,6 +85,14 @@ export default function DashboardScreen({ navigation }) {
 
   const handleOpenCalendar = useCallback(() => {
     navigation.navigate('Calendario');
+  }, [navigation]);
+
+  const handleOpenCases = useCallback(() => {
+    navigation.navigate('Causas');
+  }, [navigation]);
+
+  const handleOpenDocuments = useCallback(() => {
+    navigation.navigate('Documentos');
   }, [navigation]);
 
   const handleCreateCase = useCallback(() => {
@@ -94,18 +119,15 @@ export default function DashboardScreen({ navigation }) {
     [navigation]
   );
 
-  const dashboardData = dashboard ?? null;
-  const metricas = dashboardData?.metricas || {
+  const data = dashboard ?? null;
+  const metricas = data?.metricas || {
     causasActivas: 0,
     audienciasHoy: 0,
     documentos: 0,
     tareasPendientes: 0,
   };
-  const proximasAudiencias = dashboardData?.proximasAudiencias || [];
-  const displayName = useMemo(() => {
-    const fullName = getUserDisplayName(currentUser, dashboardData?.usuario);
-    return fullName.split(/\s+/).filter(Boolean)[0] || 'Usuario';
-  }, [currentUser, dashboardData?.usuario]);
+  const proximasAudiencias = data?.proximasAudiencias || [];
+  const nombreUsuario = data?.usuario?.nombre || 'Usuario';
 
   const metricCards = [
     {
@@ -113,24 +135,28 @@ export default function DashboardScreen({ navigation }) {
       value: metricas?.causasActivas ?? 0,
       icon: 'briefcase-variant-outline',
       accentColor: colors.primary,
+      onPress: handleOpenCases,
     },
     {
       label: 'Audiencias de hoy',
       value: metricas?.audienciasHoy ?? 0,
       icon: 'calendar-clock',
       accentColor: colors.success,
+      onPress: handleOpenCalendar,
     },
     {
       label: 'Documentos registrados',
       value: metricas?.documentos ?? 0,
       icon: 'file-document-outline',
       accentColor: colors.warning,
+      onPress: handleOpenDocuments,
     },
     {
       label: 'Tareas pendientes',
       value: metricas?.tareasPendientes ?? 0,
       icon: 'clipboard-text-clock-outline',
       accentColor: colors.danger,
+      onPress: handleOpenCalendar,
     },
   ];
 
@@ -183,7 +209,7 @@ export default function DashboardScreen({ navigation }) {
           </Pressable>
         </View>
 
-        <Text style={styles.greeting}>Hola, {displayName}</Text>
+        <Text style={styles.greeting}>Hola, {nombreUsuario}</Text>
         <Text style={styles.subtitle}>
           Gestiona tus causas, audiencias y documentos desde un solo lugar.
         </Text>
@@ -352,6 +378,7 @@ const createStyles = (colors) => StyleSheet.create({
   metricCell: {
     width: '50%',
     padding: 6,
+    aspectRatio: 1.05,
   },
   sectionHeader: {
     paddingHorizontal: 22,

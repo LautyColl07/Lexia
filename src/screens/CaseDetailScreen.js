@@ -5,6 +5,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
+import HearingRecordingPanel from '../components/HearingRecordingPanel';
 import LoadingState from '../components/LoadingState';
 import StatusBadge from '../components/StatusBadge';
 import { useAppTheme } from '../context/ThemeContext';
@@ -113,6 +114,11 @@ export default function CaseDetailScreen({ navigation, route }) {
                 {hearing?.modality || 'Modalidad a confirmar'}
                 {hearing?.location ? ` · ${hearing.location}` : ''}
               </Text>
+              <HearingRecordingPanel
+                documents={documents}
+                hearing={hearing}
+                onDocumentsChanged={loadCase}
+              />
             </View>
           ))
         ) : (

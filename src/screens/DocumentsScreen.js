@@ -1,7 +1,9 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useMemo, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+import { Alert, FlatList, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
@@ -10,12 +12,15 @@ import { useAppTheme } from '../context/ThemeContext';
 import { getDocuments } from '../services/api';
 import { formatDate } from '../utils/date';
 
+const FILE_BASE_URL = 'http://172.16.4.48:3000';
+
 export default function DocumentsScreen({ navigation }) {
   const { colors } = useAppTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [downloadingId, setDownloadingId] = useState(null);
 
   const loadDocuments = useCallback(async () => {
     try {
@@ -40,6 +45,58 @@ export default function DocumentsScreen({ navigation }) {
       void loadDocuments();
     }, [loadDocuments])
   );
+
+  const getFileUrl = useCallback((document) => {
+    if (!document?.path) {
+      return null;
+    }
+
+    return `${FILE_BASE_URL}${document.path}`;
+  }, []);
+
+  const openDocument = useCallback(async (document) => {
+    const fileUrl = getFileUrl(document);
+
+    if (!fileUrl) {
+      Alert.alert('Archivo no disponible.', 'El documento seleccionado no tiene un archivo asociado.');
+      return;
+    }
+
+    try {
+      await Linking.openURL(fileUrl);
+    } catch (openError) {
+      console.error('[DocumentsScreen] Error abriendo documento:', openError);
+      Alert.alert('No se pudo abrir el documento.', 'Intenta nuevamente.');
+    }
+  }, [getFileUrl]);
+
+  const downloadDocument = useCallback(async (document) => {
+    const fileUrl = getFileUrl(document);
+
+    if (!fileUrl) {
+      Alert.alert('Archivo no disponible.', 'El documento seleccionado no tiene un archivo asociado.');
+      return;
+    }
+
+    try {
+      setDownloadingId(document?.id ?? null);
+      const fallbackName = `documento-${document?.id || Date.now()}.pdf`;
+      const safeFileName = String(document?.fileName || fallbackName).replace(/[\\/:*?"<>|]/g, '_');
+      const localUri = `${FileSystem.documentDirectory}${safeFileName}`;
+      const result = await FileSystem.downloadAsync(fileUrl, localUri);
+
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(result.uri);
+      }
+
+      Alert.alert('Documento listo para abrir o compartir.', 'La descarga se completó correctamente.');
+    } catch (downloadError) {
+      console.error('[DocumentsScreen] Error descargando documento:', downloadError);
+      Alert.alert('No se pudo descargar el documento.', 'Intenta nuevamente.');
+    } finally {
+      setDownloadingId(null);
+    }
+  }, [getFileUrl]);
 
   if (loading && !documents.length) {
     return (
@@ -80,34 +137,69 @@ export default function DocumentsScreen({ navigation }) {
         contentContainerStyle={styles.listContent}
         data={documents}
         keyExtractor={(item) => String(item?.id)}
-        renderItem={({ item }) => (
-          <View style={styles.card}>
-            <View style={styles.cardTopRow}>
-              <View style={styles.iconWrapper}>
-                <MaterialCommunityIcons color={colors.primary} name="file-document-outline" size={22} />
+        renderItem={({ item }) => {
+          const hasFile = Boolean(item?.path);
+          const isDownloading = downloadingId === item?.id;
+
+          return (
+            <View style={styles.card}>
+              <View style={styles.cardTopRow}>
+                <View style={styles.iconWrapper}>
+                  <MaterialCommunityIcons color={colors.primary} name="file-document-outline" size={22} />
+                </View>
+                <View style={styles.cardTextContent}>
+                  <Text style={styles.cardTitle}>{item?.fileName || 'Documento sin nombre'}</Text>
+                  <Text style={styles.cardSubtitle}>{item?.documentType || 'Documento'}</Text>
+                </View>
               </View>
-              <View style={styles.cardTextContent}>
-                <Text style={styles.cardTitle}>{item?.fileName || 'Documento sin nombre'}</Text>
-                <Text style={styles.cardSubtitle}>{item?.documentType || 'Documento'}</Text>
+
+              <View style={styles.metaRow}>
+                <MaterialCommunityIcons color={colors.textSecondary} name="briefcase-outline" size={16} />
+                <Text style={styles.metaText}>{item?.caseTitle || 'Causa sin referencia'}</Text>
+              </View>
+
+              <View style={styles.metaRow}>
+                <MaterialCommunityIcons color={colors.textSecondary} name="calendar-clock" size={16} />
+                <Text style={styles.metaText}>{item?.hearingTitle || 'Audiencia sin referencia'}</Text>
+              </View>
+
+              <View style={styles.metaRow}>
+                <MaterialCommunityIcons color={colors.textSecondary} name="clock-outline" size={16} />
+                <Text style={styles.metaText}>Fecha de carga: {formatDate(item?.uploadedAt)}</Text>
+              </View>
+
+              {hasFile ? null : (
+                <Text style={styles.fileUnavailableText}>Archivo no disponible.</Text>
+              )}
+
+              <View style={styles.actionsRow}>
+                <Pressable
+                  disabled={!hasFile}
+                  onPress={() => void openDocument(item)}
+                  style={[styles.secondaryActionButton, !hasFile && styles.actionButtonDisabled]}
+                >
+                  <MaterialCommunityIcons color={hasFile ? colors.primary : colors.textMuted} name="eye-outline" size={18} />
+                  <Text style={[styles.secondaryActionText, !hasFile && styles.actionTextDisabled]}>Ver</Text>
+                </Pressable>
+
+                <Pressable
+                  disabled={!hasFile || isDownloading}
+                  onPress={() => void downloadDocument(item)}
+                  style={[styles.primaryActionButton, (!hasFile || isDownloading) && styles.actionButtonDisabled]}
+                >
+                  <MaterialCommunityIcons
+                    color={colors.textOnPrimary}
+                    name={isDownloading ? 'loading' : 'download-outline'}
+                    size={18}
+                  />
+                  <Text style={styles.primaryActionText}>
+                    {isDownloading ? 'Descargando...' : 'Descargar'}
+                  </Text>
+                </Pressable>
               </View>
             </View>
-
-            <View style={styles.metaRow}>
-              <MaterialCommunityIcons color={colors.textSecondary} name="briefcase-outline" size={16} />
-              <Text style={styles.metaText}>{item?.caseTitle || 'Causa sin referencia'}</Text>
-            </View>
-
-            <View style={styles.metaRow}>
-              <MaterialCommunityIcons color={colors.textSecondary} name="calendar-clock" size={16} />
-              <Text style={styles.metaText}>{item?.hearingTitle || 'Audiencia sin referencia'}</Text>
-            </View>
-
-            <View style={styles.metaRow}>
-              <MaterialCommunityIcons color={colors.textSecondary} name="clock-outline" size={16} />
-              <Text style={styles.metaText}>Fecha de carga: {formatDate(item?.uploadedAt)}</Text>
-            </View>
-          </View>
-        )}
+          );
+        }}
         ListEmptyComponent={
           <EmptyState
             actionLabel="Subir documento"
@@ -216,5 +308,54 @@ const createStyles = (colors) => StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 13,
     flex: 1,
+  },
+  fileUnavailableText: {
+    color: colors.danger,
+    fontSize: 13,
+    fontWeight: '600',
+    marginTop: 12,
+  },
+  actionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 16,
+  },
+  secondaryActionButton: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    backgroundColor: colors.card,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  primaryActionButton: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 16,
+    backgroundColor: colors.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  actionButtonDisabled: {
+    opacity: 0.55,
+  },
+  secondaryActionText: {
+    color: colors.primary,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  primaryActionText: {
+    color: colors.textOnPrimary,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  actionTextDisabled: {
+    color: colors.textMuted,
   },
 });

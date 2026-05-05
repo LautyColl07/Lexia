@@ -284,6 +284,23 @@ export default function MoreScreen({ navigation }) {
         />
       </CardSection>
 
+      <CardSection
+        colors={colors}
+        icon="flask-outline"
+        styles={styles}
+        subtitle="Utilidades visibles para validar integraciones de Luxia."
+        title="Herramientas"
+      >
+        <ActionRow
+          colors={colors}
+          description="Graba audio, prueba el servidor Whisper y revisa la transcripción devuelta."
+          icon="microphone-message"
+          onPress={() => navigation.navigate('TranscriptionTest')}
+          styles={styles}
+          title="Prueba de transcripción"
+        />
+      </CardSection>
+
       <View style={styles.summaryRow}>
         <View style={styles.summaryCard}>
           <Text style={styles.summaryValue}>{unreadCount}</Text>

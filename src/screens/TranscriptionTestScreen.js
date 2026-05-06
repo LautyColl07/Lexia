@@ -14,7 +14,7 @@ import { useAppTheme } from '../context/ThemeContext';
 
 const WHISPER_BASE_URL = 'http://172.16.4.48:5000';
 const DEFAULT_AUDIO_MIME_TYPE = 'audio/m4a';
-const REQUEST_TIMEOUT_MS = 45000;
+const HEALTH_TIMEOUT_MS = 45000;
 const AUDIO_EXTENSION_TO_MIME_TYPE = {
   '.aac': 'audio/aac',
   '.m4a': 'audio/m4a',
@@ -71,7 +71,7 @@ function describeAudio(audio, source) {
   return `${audio.fileName} (${sourceLabel})`;
 }
 
-async function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+async function fetchWithTimeout(url, options = {}, timeoutMs = HEALTH_TIMEOUT_MS) {
   const controller = new AbortController();
   let didTimeout = false;
   const timeoutId = setTimeout(() => {
@@ -152,6 +152,7 @@ export default function TranscriptionTestScreen() {
 
     return null;
   }, [activeAudioSource, recordedAudio, selectedAudio]);
+  const hasReadyAudio = Boolean(activeAudio?.uri);
 
   useEffect(() => () => {
     void setAudioModeAsync({
@@ -326,7 +327,9 @@ export default function TranscriptionTestScreen() {
     try {
       setIsUploading(true);
       setTranscriptText('');
-      setStatusText('Enviando audio al servidor de transcripcion...');
+      setStatusText(
+        'Transcribiendo con Whisper, esto puede tardar varios minutos. No cierres la app.'
+      );
 
       const formData = new FormData();
       formData.append('audio', {
@@ -335,7 +338,7 @@ export default function TranscriptionTestScreen() {
         type: activeAudio.mimeType || DEFAULT_AUDIO_MIME_TYPE,
       });
 
-      const response = await fetchWithTimeout(`${WHISPER_BASE_URL}/api/transcribir`, {
+      const response = await fetch(`${WHISPER_BASE_URL}/api/transcribir`, {
         body: formData,
         method: 'POST',
       });
@@ -371,6 +374,7 @@ export default function TranscriptionTestScreen() {
     } catch (error) {
       const message = buildNetworkErrorMessage(error);
       console.error('[TranscriptionTestScreen] Error transcribiendo audio:', error);
+      setTranscriptText('');
       setStatusText(message);
       Alert.alert('No se pudo transcribir el audio', message);
     } finally {
@@ -438,13 +442,6 @@ export default function TranscriptionTestScreen() {
             styles={styles}
             variant="secondary"
           />
-          <ActionButton
-            disabled={!activeAudio?.uri || isUploading || recorderState.isRecording}
-            label={isUploading ? 'Enviando a transcribir...' : 'Enviar a transcribir'}
-            onPress={() => void handleUploadForTranscription()}
-            styles={styles}
-            variant="primary"
-          />
         </View>
       </View>
 
@@ -474,6 +471,18 @@ export default function TranscriptionTestScreen() {
         <Text style={styles.infoText}>{describeAudio(activeAudio, activeAudioSource)}</Text>
       </View>
 
+      <View style={styles.uploadActionContainer}>
+        <ActionButton
+          disabled={!hasReadyAudio || isUploading || recorderState.isRecording}
+          label={
+            isUploading ? 'Enviando audio a transcribir...' : 'Enviar audio a transcribir'
+          }
+          onPress={() => void handleUploadForTranscription()}
+          styles={styles}
+          variant="uploadPrimary"
+        />
+      </View>
+
       <View style={styles.transcriptCard}>
         <Text style={styles.infoLabel}>Texto transcripto</Text>
         <Text style={styles.transcriptText}>
@@ -485,8 +494,18 @@ export default function TranscriptionTestScreen() {
 }
 
 function ActionButton({ disabled, label, onPress, styles, variant }) {
-  const buttonStyle = variant === 'primary' ? styles.primaryButton : styles.secondaryButton;
-  const textStyle = variant === 'primary' ? styles.primaryButtonText : styles.secondaryButtonText;
+  const isPrimary = variant === 'primary';
+  const isUploadPrimary = variant === 'uploadPrimary';
+  const buttonStyle = isUploadPrimary
+    ? styles.uploadPrimaryButton
+    : isPrimary
+      ? styles.primaryButton
+      : styles.secondaryButton;
+  const textStyle = isUploadPrimary
+    ? styles.uploadPrimaryButtonText
+    : isPrimary
+      ? styles.primaryButtonText
+      : styles.secondaryButtonText;
 
   return (
     <Pressable
@@ -568,6 +587,9 @@ const createStyles = (colors) =>
       gap: 10,
       marginTop: 18,
     },
+    uploadActionContainer: {
+      marginTop: -4,
+    },
     primaryButton: {
       minHeight: 48,
       borderRadius: 16,
@@ -586,6 +608,20 @@ const createStyles = (colors) =>
       justifyContent: 'center',
       paddingHorizontal: 14,
     },
+    uploadPrimaryButton: {
+      minHeight: 54,
+      borderRadius: 18,
+      backgroundColor: '#2563EB',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 20,
+      paddingVertical: 14,
+      shadowColor: colors.shadow,
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: 0.18,
+      shadowRadius: 16,
+      elevation: 4,
+    },
     buttonDisabled: {
       opacity: 0.55,
     },
@@ -593,6 +629,12 @@ const createStyles = (colors) =>
       color: colors.textOnPrimary,
       fontSize: 14,
       fontWeight: '700',
+      textAlign: 'center',
+    },
+    uploadPrimaryButtonText: {
+      color: '#FFFFFF',
+      fontSize: 15,
+      fontWeight: '800',
       textAlign: 'center',
     },
     secondaryButtonText: {

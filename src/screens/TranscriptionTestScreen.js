@@ -6,19 +6,93 @@ import {
   useAudioRecorder,
   useAudioRecorderState,
 } from 'expo-audio';
+import * as DocumentPicker from 'expo-document-picker';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAppTheme } from '../context/ThemeContext';
 
 const WHISPER_BASE_URL = 'http://172.16.4.48:5000';
-const AUDIO_MIME_TYPE = 'audio/mp4';
+const DEFAULT_AUDIO_MIME_TYPE = 'audio/m4a';
+const REQUEST_TIMEOUT_MS = 45000;
+const AUDIO_EXTENSION_TO_MIME_TYPE = {
+  '.aac': 'audio/aac',
+  '.m4a': 'audio/m4a',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.wav': 'audio/wav',
+};
 
 function formatDuration(durationMillis) {
   const totalSeconds = Math.max(0, Math.floor((Number(durationMillis) || 0) / 1000));
   const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
   const seconds = String(totalSeconds % 60).padStart(2, '0');
   return `${minutes}:${seconds}`;
+}
+
+function getFileExtension(fileName = '') {
+  const lastDotIndex = fileName.lastIndexOf('.');
+
+  if (lastDotIndex < 0) {
+    return '';
+  }
+
+  return fileName.slice(lastDotIndex).toLowerCase();
+}
+
+function getMimeTypeFromFileName(fileName = '') {
+  return AUDIO_EXTENSION_TO_MIME_TYPE[getFileExtension(fileName)] || null;
+}
+
+function getFileNameFromUri(uri = '') {
+  if (!uri) {
+    return '';
+  }
+
+  const uriWithoutQuery = uri.split('?')[0];
+  const segments = uriWithoutQuery.split('/');
+  return segments[segments.length - 1] || '';
+}
+
+function isSupportedAudioSelection({ fileName, mimeType }) {
+  if (mimeType?.toLowerCase().startsWith('audio/')) {
+    return true;
+  }
+
+  return Boolean(getMimeTypeFromFileName(fileName));
+}
+
+function describeAudio(audio, source) {
+  if (!audio?.fileName) {
+    return 'Todavia no hay un audio listo para enviar.';
+  }
+
+  const sourceLabel = source === 'selected' ? 'archivo seleccionado' : 'audio grabado';
+  return `${audio.fileName} (${sourceLabel})`;
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  let didTimeout = false;
+  const timeoutId = setTimeout(() => {
+    didTimeout = true;
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (didTimeout) {
+      throw new Error(`timeout:${timeoutMs}`);
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 async function parseApiResponse(response) {
@@ -35,6 +109,10 @@ async function parseApiResponse(response) {
 function buildNetworkErrorMessage(error) {
   if (error instanceof Error) {
     const message = error.message.toLowerCase();
+
+    if (message.includes('timeout:') || message.includes('timed out')) {
+      return 'La solicitud supero el tiempo limite. Intenta nuevamente.';
+    }
 
     if (message.includes('network request failed')) {
       return 'Error de red. Verifica que el dispositivo pueda alcanzar 172.16.4.48.';
@@ -55,11 +133,25 @@ export default function TranscriptionTestScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder, 250);
-  const [statusText, setStatusText] = useState('Lista para probar el servidor de transcripción.');
+  const [statusText, setStatusText] = useState('Lista para probar el servidor de transcripcion.');
   const [recordedAudio, setRecordedAudio] = useState(null);
+  const [selectedAudio, setSelectedAudio] = useState(null);
+  const [activeAudioSource, setActiveAudioSource] = useState(null);
   const [transcriptText, setTranscriptText] = useState('');
   const [isCheckingConnection, setIsCheckingConnection] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+
+  const activeAudio = useMemo(() => {
+    if (activeAudioSource === 'selected') {
+      return selectedAudio;
+    }
+
+    if (activeAudioSource === 'recorded') {
+      return recordedAudio;
+    }
+
+    return null;
+  }, [activeAudioSource, recordedAudio, selectedAudio]);
 
   useEffect(() => () => {
     void setAudioModeAsync({
@@ -74,9 +166,9 @@ export default function TranscriptionTestScreen() {
   const handleCheckConnection = useCallback(async () => {
     try {
       setIsCheckingConnection(true);
-      setStatusText('Probando conexión con el servidor de transcripción...');
+      setStatusText('Probando conexion con el servidor de transcripcion...');
 
-      const response = await fetch(`${WHISPER_BASE_URL}/api/health`);
+      const response = await fetchWithTimeout(`${WHISPER_BASE_URL}/api/health`);
       const payload = await parseApiResponse(response);
 
       if (!response.ok) {
@@ -91,7 +183,7 @@ export default function TranscriptionTestScreen() {
         throw new Error(payload?.message || payload?.error || 'El backend devolvio ok:false.');
       }
 
-      setStatusText('Conexión OK con el servidor de transcripción.');
+      setStatusText('Conexion OK con el servidor de transcripcion.');
     } catch (error) {
       const message = buildNetworkErrorMessage(error);
       console.error('[TranscriptionTestScreen] Error probando conexion:', error);
@@ -124,6 +216,8 @@ export default function TranscriptionTestScreen() {
       await recorder.prepareToRecordAsync();
       recorder.record();
       setRecordedAudio(null);
+      setSelectedAudio(null);
+      setActiveAudioSource(null);
       setTranscriptText('');
       setStatusText('Grabando audio...');
     } catch (error) {
@@ -155,11 +249,13 @@ export default function TranscriptionTestScreen() {
       const nextRecording = {
         uri: recordingUri,
         fileName: `transcription-test-${Date.now()}.m4a`,
-        mimeType: AUDIO_MIME_TYPE,
+        mimeType: DEFAULT_AUDIO_MIME_TYPE,
         durationMillis: recorderState.durationMillis || 0,
       };
 
       setRecordedAudio(nextRecording);
+      setSelectedAudio(null);
+      setActiveAudioSource('recorded');
       setStatusText(`Audio grabado correctamente (${formatDuration(nextRecording.durationMillis)}).`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo detener la grabacion.';
@@ -169,9 +265,59 @@ export default function TranscriptionTestScreen() {
     }
   }, [recorder, recorderState.durationMillis, recorderState.url]);
 
+  const handleSelectAudioFile = useCallback(async () => {
+    try {
+      setStatusText('Abriendo selector de audio...');
+
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'audio/*',
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+
+      if (result.canceled) {
+        setStatusText('Seleccion de audio cancelada por el usuario.');
+        return;
+      }
+
+      const asset = result.assets?.[0];
+
+      if (!asset) {
+        throw new Error('No se recibio ningun archivo de audio.');
+      }
+
+      if (!asset.uri) {
+        throw new Error('El archivo seleccionado no tiene una URI valida.');
+      }
+
+      const resolvedFileName =
+        asset.name || getFileNameFromUri(asset.uri) || `audio-${Date.now()}.m4a`;
+      const resolvedMimeType = asset.mimeType || getMimeTypeFromFileName(resolvedFileName);
+
+      if (!isSupportedAudioSelection({ fileName: resolvedFileName, mimeType: resolvedMimeType })) {
+        throw new Error('Archivo no compatible. Usa .m4a, .mp3, .wav, .aac u .ogg.');
+      }
+
+      setSelectedAudio({
+        uri: asset.uri,
+        fileName: resolvedFileName,
+        mimeType: resolvedMimeType || DEFAULT_AUDIO_MIME_TYPE,
+      });
+      setActiveAudioSource('selected');
+      setTranscriptText('');
+      setStatusText('Audio seleccionado correctamente.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'No se pudo seleccionar el archivo de audio.';
+      console.error('[TranscriptionTestScreen] Error seleccionando audio:', error);
+      setStatusText(message);
+      Alert.alert('No se pudo seleccionar el audio', message);
+    }
+  }, []);
+
   const handleUploadForTranscription = useCallback(async () => {
-    if (!recordedAudio?.uri) {
-      const message = 'No hay audio grabado para enviar a transcribir.';
+    if (!activeAudio?.uri) {
+      const message = 'No hay audio seleccionado ni grabado para enviar a transcribir.';
       setStatusText(message);
       Alert.alert('Audio no disponible', message);
       return;
@@ -180,16 +326,16 @@ export default function TranscriptionTestScreen() {
     try {
       setIsUploading(true);
       setTranscriptText('');
-      setStatusText('Enviando audio al servidor de transcripción...');
+      setStatusText('Enviando audio al servidor de transcripcion...');
 
       const formData = new FormData();
       formData.append('audio', {
-        uri: recordedAudio.uri,
-        name: recordedAudio.fileName,
-        type: recordedAudio.mimeType,
+        uri: activeAudio.uri,
+        name: activeAudio.fileName || 'audio.m4a',
+        type: activeAudio.mimeType || DEFAULT_AUDIO_MIME_TYPE,
       });
 
-      const response = await fetch(`${WHISPER_BASE_URL}/api/transcribir`, {
+      const response = await fetchWithTimeout(`${WHISPER_BASE_URL}/api/transcribir`, {
         body: formData,
         method: 'POST',
       });
@@ -219,8 +365,8 @@ export default function TranscriptionTestScreen() {
       setTranscriptText(nextTranscript);
       setStatusText(
         nextTranscript
-          ? 'Transcripción recibida correctamente.'
-          : 'El servidor respondió, pero no devolvió texto transcripto.'
+          ? 'Transcripcion recibida correctamente.'
+          : 'El servidor respondio, pero no devolvio texto transcripto.'
       );
     } catch (error) {
       const message = buildNetworkErrorMessage(error);
@@ -230,7 +376,7 @@ export default function TranscriptionTestScreen() {
     } finally {
       setIsUploading(false);
     }
-  }, [recordedAudio]);
+  }, [activeAudio]);
 
   const liveStatus = useMemo(() => {
     if (recorderState.isRecording) {
@@ -241,27 +387,32 @@ export default function TranscriptionTestScreen() {
   }, [recorderState.durationMillis, recorderState.isRecording, statusText]);
 
   return (
-    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} style={styles.screen}>
+    <ScrollView
+      contentContainerStyle={styles.content}
+      showsVerticalScrollIndicator={false}
+      style={styles.screen}
+    >
       <View style={styles.heroCard}>
         <View style={styles.heroIcon}>
           <MaterialCommunityIcons color={colors.textOnPrimary} name="microphone-message" size={28} />
         </View>
-        <Text style={styles.heroTitle}>Prueba de transcripción</Text>
+        <Text style={styles.heroTitle}>Prueba de transcripcion</Text>
         <Text style={styles.heroSubtitle}>
-          Graba un audio corto, verifica conexión con Whisper y envía el archivo al endpoint configurado.
+          Graba o selecciona un audio, verifica conexion con Whisper y envia el archivo al endpoint
+          configurado.
         </Text>
       </View>
 
       <View style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>Controles</Text>
         <Text style={styles.sectionSubtitle}>
-          Usa esta pantalla para validar permisos, grabación local y respuesta del backend.
+          Usa esta pantalla para validar permisos, seleccion de archivos y respuesta del backend.
         </Text>
 
         <View style={styles.buttonGrid}>
           <ActionButton
             disabled={isCheckingConnection || isUploading || recorderState.isRecording}
-            label={isCheckingConnection ? 'Probando conexión...' : 'Probar conexión'}
+            label={isCheckingConnection ? 'Probando conexion...' : 'Probar conexion'}
             onPress={() => void handleCheckConnection()}
             styles={styles}
             variant="secondary"
@@ -281,7 +432,14 @@ export default function TranscriptionTestScreen() {
             variant="secondary"
           />
           <ActionButton
-            disabled={!recordedAudio?.uri || isUploading || recorderState.isRecording}
+            disabled={isUploading || recorderState.isRecording}
+            label="Seleccionar audio"
+            onPress={() => void handleSelectAudioFile()}
+            styles={styles}
+            variant="secondary"
+          />
+          <ActionButton
+            disabled={!activeAudio?.uri || isUploading || recorderState.isRecording}
             label={isUploading ? 'Enviando a transcribir...' : 'Enviar a transcribir'}
             onPress={() => void handleUploadForTranscription()}
             styles={styles}
@@ -298,8 +456,22 @@ export default function TranscriptionTestScreen() {
       <View style={styles.infoCard}>
         <Text style={styles.infoLabel}>Audio grabado</Text>
         <Text style={styles.infoText}>
-          {recordedAudio?.uri || 'Todavia no se genero un archivo local.'}
+          {recordedAudio?.fileName
+            ? `${recordedAudio.fileName} (${formatDuration(recordedAudio.durationMillis)})`
+            : 'Todavia no se genero un archivo local.'}
         </Text>
+      </View>
+
+      <View style={styles.infoCard}>
+        <Text style={styles.infoLabel}>Archivo seleccionado</Text>
+        <Text style={styles.infoText}>
+          {selectedAudio?.fileName || 'Todavia no se selecciono ningun archivo.'}
+        </Text>
+      </View>
+
+      <View style={styles.infoCard}>
+        <Text style={styles.infoLabel}>Audio listo para enviar</Text>
+        <Text style={styles.infoText}>{describeAudio(activeAudio, activeAudioSource)}</Text>
       </View>
 
       <View style={styles.transcriptCard}>
@@ -327,139 +499,140 @@ function ActionButton({ disabled, label, onPress, styles, variant }) {
   );
 }
 
-const createStyles = (colors) => StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  content: {
-    paddingHorizontal: 20,
-    paddingTop: 24,
-    paddingBottom: 34,
-    gap: 18,
-  },
-  heroCard: {
-    backgroundColor: colors.primaryDeep,
-    borderRadius: 30,
-    padding: 24,
-    shadowColor: colors.shadow,
-    shadowOffset: { width: 0, height: 14 },
-    shadowOpacity: 0.22,
-    shadowRadius: 24,
-    elevation: 8,
-  },
-  heroIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.14)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  heroTitle: {
-    color: colors.textOnPrimary,
-    fontSize: 24,
-    fontWeight: '800',
-    marginTop: 18,
-  },
-  heroSubtitle: {
-    color: 'rgba(255,255,255,0.8)',
-    fontSize: 14,
-    lineHeight: 21,
-    marginTop: 8,
-  },
-  sectionCard: {
-    backgroundColor: colors.card,
-    borderRadius: 26,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
-    shadowColor: colors.shadow,
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.12,
-    shadowRadius: 20,
-    elevation: 4,
-  },
-  sectionTitle: {
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  sectionSubtitle: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 20,
-    marginTop: 6,
-  },
-  buttonGrid: {
-    gap: 10,
-    marginTop: 18,
-  },
-  primaryButton: {
-    minHeight: 48,
-    borderRadius: 16,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-  },
-  secondaryButton: {
-    minHeight: 48,
-    borderRadius: 16,
-    backgroundColor: colors.backgroundAlt,
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-  },
-  buttonDisabled: {
-    opacity: 0.55,
-  },
-  primaryButtonText: {
-    color: colors.textOnPrimary,
-    fontSize: 14,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  secondaryButtonText: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  buttonTextDisabled: {
-    color: colors.textMuted,
-  },
-  infoCard: {
-    backgroundColor: colors.card,
-    borderRadius: 22,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
-    gap: 8,
-  },
-  infoLabel: {
-    color: colors.text,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  infoText: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 20,
-  },
-  transcriptCard: {
-    backgroundColor: colors.accentSoft,
-    borderRadius: 22,
-    padding: 18,
-    gap: 8,
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
-  },
-  transcriptText: {
-    color: colors.text,
-    fontSize: 14,
-    lineHeight: 22,
-  },
-});
+const createStyles = (colors) =>
+  StyleSheet.create({
+    screen: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    content: {
+      paddingHorizontal: 20,
+      paddingTop: 24,
+      paddingBottom: 34,
+      gap: 18,
+    },
+    heroCard: {
+      backgroundColor: colors.primaryDeep,
+      borderRadius: 30,
+      padding: 24,
+      shadowColor: colors.shadow,
+      shadowOffset: { width: 0, height: 14 },
+      shadowOpacity: 0.22,
+      shadowRadius: 24,
+      elevation: 8,
+    },
+    heroIcon: {
+      width: 56,
+      height: 56,
+      borderRadius: 18,
+      backgroundColor: 'rgba(255,255,255,0.14)',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    heroTitle: {
+      color: colors.textOnPrimary,
+      fontSize: 24,
+      fontWeight: '800',
+      marginTop: 18,
+    },
+    heroSubtitle: {
+      color: 'rgba(255,255,255,0.8)',
+      fontSize: 14,
+      lineHeight: 21,
+      marginTop: 8,
+    },
+    sectionCard: {
+      backgroundColor: colors.card,
+      borderRadius: 26,
+      padding: 18,
+      borderWidth: 1,
+      borderColor: colors.borderSoft,
+      shadowColor: colors.shadow,
+      shadowOffset: { width: 0, height: 12 },
+      shadowOpacity: 0.12,
+      shadowRadius: 20,
+      elevation: 4,
+    },
+    sectionTitle: {
+      color: colors.text,
+      fontSize: 18,
+      fontWeight: '700',
+    },
+    sectionSubtitle: {
+      color: colors.textSecondary,
+      fontSize: 13,
+      lineHeight: 20,
+      marginTop: 6,
+    },
+    buttonGrid: {
+      gap: 10,
+      marginTop: 18,
+    },
+    primaryButton: {
+      minHeight: 48,
+      borderRadius: 16,
+      backgroundColor: colors.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 14,
+    },
+    secondaryButton: {
+      minHeight: 48,
+      borderRadius: 16,
+      backgroundColor: colors.backgroundAlt,
+      borderWidth: 1,
+      borderColor: colors.borderSoft,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 14,
+    },
+    buttonDisabled: {
+      opacity: 0.55,
+    },
+    primaryButtonText: {
+      color: colors.textOnPrimary,
+      fontSize: 14,
+      fontWeight: '700',
+      textAlign: 'center',
+    },
+    secondaryButtonText: {
+      color: colors.text,
+      fontSize: 14,
+      fontWeight: '700',
+      textAlign: 'center',
+    },
+    buttonTextDisabled: {
+      color: colors.textMuted,
+    },
+    infoCard: {
+      backgroundColor: colors.card,
+      borderRadius: 22,
+      padding: 18,
+      borderWidth: 1,
+      borderColor: colors.borderSoft,
+      gap: 8,
+    },
+    infoLabel: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    infoText: {
+      color: colors.textSecondary,
+      fontSize: 13,
+      lineHeight: 20,
+    },
+    transcriptCard: {
+      backgroundColor: colors.accentSoft,
+      borderRadius: 22,
+      padding: 18,
+      gap: 8,
+      borderWidth: 1,
+      borderColor: colors.borderSoft,
+    },
+    transcriptText: {
+      color: colors.text,
+      fontSize: 14,
+      lineHeight: 22,
+    },
+  });

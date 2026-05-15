@@ -42,18 +42,22 @@ export default function HearingTimelineCard({
             <Text style={styles.metaText}>{formatDateTime(hearing?.date)}</Text>
           </View>
 
-          <View style={styles.metaRow}>
-            <MaterialCommunityIcons color={colors.textSecondary} name="scale-balance" size={16} />
-            <Text style={styles.metaText}>{hearing.court || 'Juzgado a confirmar'}</Text>
-          </View>
+          {hearing?.court ? (
+            <View style={styles.metaRow}>
+              <MaterialCommunityIcons color={colors.textSecondary} name="scale-balance" size={16} />
+              <Text style={styles.metaText}>{hearing.court}</Text>
+            </View>
+          ) : null}
 
-          <View style={styles.metaRow}>
-            <MaterialCommunityIcons color={colors.textSecondary} name="map-marker-outline" size={16} />
-            <Text style={styles.metaText}>
-              {hearing?.modality || 'Modalidad a confirmar'}
-              {hearing?.location ? ` · ${hearing.location}` : ''}
-            </Text>
-          </View>
+          {hearing?.modality ? (
+            <View style={styles.metaRow}>
+              <MaterialCommunityIcons color={colors.textSecondary} name="map-marker-outline" size={16} />
+              <Text style={styles.metaText}>
+                {hearing.modality}
+                {hearing?.location ? ` · ${hearing.location}` : ''}
+              </Text>
+            </View>
+          ) : null}
 
           {showAction ? (
             <Pressable onPress={onPressAction} style={styles.actionButton}>

@@ -14,7 +14,7 @@ import {
 } from '../utils/date';
 import { showSuccessAndGoBack } from '../utils/formFeedback';
 
-const MODALITY_OPTIONS = ['Presencial', 'Virtual', 'Hibrida'];
+const MODALITY_OPTIONS = ['Presencial', 'Virtual', 'Mixta', 'Telefonica'];
 const TIME_PRESETS = ['09:00', '11:15', '15:00', '17:30'];
 
 export default function NewHearingScreen({ navigation, route }) {
@@ -30,7 +30,7 @@ export default function NewHearingScreen({ navigation, route }) {
     caseId: initialCaseId,
     date: '',
     time: '',
-    modality: 'Presencial',
+    modality: '',
     location: '',
   });
 
@@ -121,7 +121,8 @@ export default function NewHearingScreen({ navigation, route }) {
         fecha: apiDate,
         time: form.time.trim(),
         fechaHora: normalizedDateTime,
-        modality: form.modality,
+        modality: form.modality || null,
+        modalidad: form.modality || null,
         location: form.location.trim(),
       });
 
@@ -304,7 +305,7 @@ export default function NewHearingScreen({ navigation, route }) {
             Fecha y hora: {form.date || 'Pendiente'}{form.time ? ` · ${form.time} hs` : ''}
           </Text>
           <Text style={styles.summaryText}>
-            Modalidad: {form.modality}
+            Modalidad: {form.modality || 'Sin modalidad'}
             {form.location ? ` · ${form.location}` : ''}
           </Text>
         </View>

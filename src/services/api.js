@@ -1,5 +1,4 @@
-import Constants from 'expo-constants';
-
+import { API_BASE_URL as CONFIG_API_BASE_URL, API_ROOT_URL } from '../config/api';
 import { auth } from '../config/firebase';
 import mockData from '../data/mockData';
 import { normalizeStatusLabel } from '../utils/status';
@@ -7,23 +6,21 @@ import { getUserDisplayName, getUserEmail, getUserRole } from '../utils/userDisp
 
 export const USE_MOCKS = false;
 
-const DEFAULT_API_BASE_URL = 'http://172.16.4.48:3000/api/v1';
 const DASHBOARD_RESUMEN_ENDPOINT = '/dashboard/resumen';
 
-export const API_BASE_URL = (
-  process.env.EXPO_PUBLIC_API_BASE_URL ||
-  Constants.expoConfig?.extra?.apiBaseUrl ||
-  DEFAULT_API_BASE_URL
-).replace(/\/+$/, '');
+export const API_BASE_URL = CONFIG_API_BASE_URL;
 
-export const FILE_BASE_URL = API_BASE_URL.replace(/\/api\/v1$/, '');
+export const FILE_BASE_URL = API_ROOT_URL;
 
 let authToken = null;
 let mockStore = JSON.parse(JSON.stringify(mockData));
 const REQUEST_TIMEOUT_MS = 8000;
+const LUX_REQUEST_TIMEOUT_MS = 120000;
 const EXPIRED_SESSION_MESSAGE = 'Tu sesión expiró. Iniciá sesión nuevamente.';
 const MISSING_SESSION_MESSAGE = 'No hay una sesión activa. Iniciá sesión nuevamente.';
-const PROTECTED_ENDPOINT_PREFIXES = ['/dashboard/resumen', '/causas', '/audiencias', '/documentos'];
+const PROTECTED_ENDPOINT_PREFIXES = ['/dashboard/resumen', '/causas', '/audiencias', '/documentos', '/lux/chat'];
+const LUX_CONNECTION_ERROR_MESSAGE = 'No pude conectarme con LUX en este momento.';
+const LUX_TIMEOUT_ERROR_MESSAGE = 'LUX tardó demasiado en responder. Intentá de nuevo con una consulta más corta.';
 
 function simulateDelay(result, ms = 450) {
   return new Promise((resolve) => {
@@ -76,6 +73,38 @@ function safeString(value, fallback = '') {
 function safeOptionalString(value) {
   const normalized = safeString(value, '');
   return normalized || null;
+}
+
+function firstTextValue(...values) {
+  for (const value of values) {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+
+      if (trimmed) {
+        return trimmed;
+      }
+
+      continue;
+    }
+
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return String(value);
+    }
+  }
+
+  return null;
+}
+
+function firstObjectValue(...values) {
+  return values.find((value) => value && typeof value === 'object' && !Array.isArray(value)) || {};
+}
+
+function normalizeLookupKey(value) {
+  return safeString(value, '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
 }
 
 function getAuthenticatedUserCandidate() {
@@ -208,19 +237,48 @@ function normalizeTask(task) {
 function normalizeHearing(hearing, context = {}) {
   const source = hearing || {};
   const defaultCase = context.defaultCase || {};
-  const caseRef = source.case || source.causa || defaultCase;
+  const caseRef = firstObjectValue(source.case, source.causa, source.caseData, defaultCase);
   const isoDate = normalizeDateValue(source.date ?? source.fechaHora) || combineDateTime(source.fecha, source.hora);
-  const title = safeString(source.title ?? source.titulo, 'Audiencia sin titulo');
-  const caseTitle = safeString(
-    source.caseTitle ?? source.causaNombre ?? source.causa ?? caseRef?.title ?? caseRef?.titulo,
-    'Causa sin referencia'
+  const time = getTimePart(isoDate);
+  const title = firstTextValue(source.title, source.titulo) || 'Audiencia sin titulo';
+  const caseTitle = firstTextValue(
+    source.caseTitle,
+    source.case_title,
+    source.causaNombre,
+    source.caseName,
+    source.case?.title,
+    source.case?.titulo,
+    source.causa?.title,
+    source.causa?.titulo,
+    source.caseData?.title,
+    source.caseData?.titulo,
+    source.causa
+  ) || 'Causa sin referencia';
+  const court = firstTextValue(
+    source.court,
+    source.courtName,
+    source.caseCourt,
+    source.case_court,
+    source.juzgado,
+    source.case?.court,
+    source.case?.courtName,
+    source.case?.juzgado,
+    source.causa?.court,
+    source.causa?.juzgado,
+    source.caseData?.court,
+    source.caseData?.juzgado
   );
-  const court = safeString(
-    source.court ?? source.juzgado ?? caseRef?.court ?? caseRef?.juzgado,
-    'Juzgado a confirmar'
+  const modality = firstTextValue(
+    source.modality,
+    source.modalidad,
+    source.mode,
+    source.format,
+    source.tipoModalidad,
+    source.hearingMode,
+    source.case?.modality,
+    source.causa?.modalidad
   );
-  const modality = safeOptionalString(source.modality ?? source.modalidad);
-  const location = safeOptionalString(source.location ?? source.ubicacion ?? source.sala);
+  const location = firstTextValue(source.location, source.ubicacion, source.sala);
   const canStart =
     typeof source.canStart === 'boolean'
       ? source.canStart
@@ -236,8 +294,9 @@ function normalizeHearing(hearing, context = {}) {
     titulo: title,
     date: isoDate,
     fecha: getDatePart(isoDate),
-    hora: getTimePart(isoDate),
-    caseId: getId(source.caseId ?? source.causaId ?? caseRef?.id),
+    time,
+    hora: time,
+    caseId: getId(source.caseId ?? source.causaId ?? source.case_id ?? source.causa_id ?? caseRef?.id),
     caseTitle,
     causa: caseTitle,
     court,
@@ -250,6 +309,7 @@ function normalizeHearing(hearing, context = {}) {
     puedeIniciar: canStart,
     status,
     estado: status,
+    raw: source,
   };
 }
 
@@ -291,7 +351,7 @@ function normalizeDocument(document, context = {}) {
 
 function normalizeCase(caseItem) {
   const source = caseItem || {};
-  const title = safeString(source.title ?? source.titulo, 'Causa sin titulo');
+  const title = safeString(source.title ?? source.titulo ?? source.caratula, 'Causa sin titulo');
   const description = safeString(source.description ?? source.descripcion, 'Sin informacion adicional registrada.');
   const status = normalizeStatusLabel(source.status ?? source.estado, 'Activa');
   const court = safeString(source.court ?? source.juzgado ?? source.tribunal, 'Juzgado a confirmar');
@@ -356,6 +416,82 @@ function normalizeDashboardResumen(data) {
   };
 }
 
+function shouldEnrichHearingCourt(hearing) {
+  return (
+    !hearing?.court &&
+    (Boolean(hearing?.caseId) || hearing?.caseTitle !== 'Causa sin referencia')
+  );
+}
+
+function getRelatedCaseFromHearing(hearing, relatedCase) {
+  return firstObjectValue(hearing.raw?.case, hearing.raw?.causa, hearing.raw?.caseData, relatedCase);
+}
+
+function getCaseLookupTitle(caseItem) {
+  return normalizeLookupKey(firstTextValue(caseItem?.title, caseItem?.titulo, caseItem?.caratula));
+}
+
+function enrichHearingsWithCases(hearings = [], cases = []) {
+  const caseMap = new Map(
+    cases
+      .filter((item) => item?.id !== undefined && item?.id !== null)
+      .map((item) => [String(item.id), item])
+  );
+  const caseTitleMap = new Map(
+    cases
+      .map((item) => [getCaseLookupTitle(item), item])
+      .filter(([key]) => Boolean(key))
+  );
+
+  return hearings.map((hearing) => {
+    const relatedCase =
+      caseMap.get(String(hearing?.caseId)) ||
+      caseTitleMap.get(normalizeLookupKey(hearing?.caseTitle));
+
+    if (!relatedCase) {
+      return hearing;
+    }
+
+    return normalizeHearing(
+      {
+        ...hearing.raw,
+        ...hearing,
+        case: getRelatedCaseFromHearing(hearing, relatedCase),
+        caseTitle:
+          hearing.caseTitle === 'Causa sin referencia'
+            ? relatedCase.title ?? relatedCase.titulo
+            : hearing.caseTitle,
+        court: hearing.court || relatedCase.court || relatedCase.juzgado || null,
+        modality: hearing.modality || relatedCase.modality || relatedCase.modalidad || null,
+      },
+      { defaultCase: relatedCase }
+    );
+  });
+}
+
+async function enrichDashboardResumenWithCases(resumen) {
+  const needsCaseLookup = resumen.proximasAudiencias.some(shouldEnrichHearingCourt);
+
+  if (!needsCaseLookup) {
+    return resumen;
+  }
+
+  try {
+    const cases = await getCases();
+
+    return {
+      ...resumen,
+      proximasAudiencias: sortByDateAsc(
+        enrichHearingsWithCases(resumen.proximasAudiencias, cases),
+        'date'
+      ),
+    };
+  } catch (error) {
+    console.error('[DASHBOARD] No pudimos enriquecer audiencias con causas:', error);
+    return resumen;
+  }
+}
+
 function normalizeNotification(notification) {
   const source = notification || {};
   const createdAt = normalizeDateValue(source.createdAt ?? source.fecha ?? source.date);
@@ -381,7 +517,7 @@ function mapUpcomingHearings(limit = 5) {
       normalizeHearing({
         ...item,
         caseTitle: caseMap[item.caseId]?.title || 'Causa sin referencia',
-        court: caseMap[item.caseId]?.court || 'Juzgado a confirmar',
+        court: caseMap[item.caseId]?.court || null,
         canStart: true,
       })
     );
@@ -410,6 +546,7 @@ function createRequestError(message, status = 0, data = null) {
   const error = new Error(message);
   error.status = status;
   error.data = data;
+  error.response = data;
   return error;
 }
 
@@ -424,6 +561,14 @@ function getErrorMessage(status, data) {
 
   if (data?.message) {
     return data.message;
+  }
+
+  if (status >= 400 && status < 500 && data?.error) {
+    if (Array.isArray(data?.missingFields) && data.missingFields.length) {
+      return data.error + ': ' + data.missingFields.join(', ');
+    }
+
+    return data.error;
   }
 
   if (status >= 500) {
@@ -486,21 +631,29 @@ async function getRequestAuthHeaders(path, customHeaders = {}) {
 
 export async function request(endpoint, options = {}) {
   if (!API_BASE_URL) {
-    throw new Error('Defini EXPO_PUBLIC_API_BASE_URL para usar la API real.');
+    throw new Error('Configura API_BASE_URL en src/config/api.js para usar la API real.');
   }
 
+  const requestTimeoutMs =
+    Number.isFinite(Number(options.timeout)) && Number(options.timeout) > 0
+      ? Number(options.timeout)
+      : REQUEST_TIMEOUT_MS;
+  const requestTimeoutMessage =
+    options.timeoutMessage || 'La solicitud a ' + endpoint + ' supero el maximo de ' + requestTimeoutMs + ' ms.';
+  const { timeout, timeoutMessage, ...fetchOptions } = options;
   const path = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
   const url = API_BASE_URL + path;
   const hasJsonBody =
-    options.body !== undefined &&
-    options.body !== null &&
-    !(options.body instanceof FormData) &&
-    typeof options.body !== 'string';
-  const body = hasJsonBody ? JSON.stringify(options.body) : options.body;
+    fetchOptions.body !== undefined &&
+    fetchOptions.body !== null &&
+    !(fetchOptions.body instanceof FormData) &&
+    typeof fetchOptions.body !== 'string';
+  const body = hasJsonBody ? JSON.stringify(fetchOptions.body) : fetchOptions.body;
+  console.log('[API] baseURL:', API_BASE_URL);
   console.log('[API] endpoint:', endpoint);
   console.log('[API] url:', url);
   console.log('[API] currentUser uid:', auth.currentUser?.uid || null);
-  const { headers: authHeaders, token } = await getRequestAuthHeaders(path, options.headers);
+  const { headers: authHeaders, token } = await getRequestAuthHeaders(path, fetchOptions.headers);
   console.log('[API] token presente:', Boolean(token));
 
   let response;
@@ -509,17 +662,17 @@ export async function request(endpoint, options = {}) {
   try {
     response = await runWithTimeout(
       fetch(url, {
-        ...options,
+        ...fetchOptions,
         body,
         headers: {
           Accept: 'application/json',
           ...(body !== undefined && body !== null && !(body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
           ...authHeaders,
-          ...options.headers,
+          ...fetchOptions.headers,
         },
       }),
-      REQUEST_TIMEOUT_MS,
-      'La solicitud a ' + path + ' supero el maximo de ' + REQUEST_TIMEOUT_MS + ' ms.'
+      requestTimeoutMs,
+      requestTimeoutMessage
     );
   } catch (error) {
     throw createRequestError(
@@ -619,7 +772,11 @@ export async function getDashboardResumen() {
   }
 
   const data = await request(DASHBOARD_RESUMEN_ENDPOINT);
-  return normalizeDashboardResumen(data);
+  toArray(data?.proximasAudiencias ?? data?.upcomingHearings).forEach((audiencia) => {
+    console.log('[DASHBOARD] Audiencia recibida:', JSON.stringify(audiencia, null, 2));
+  });
+
+  return enrichDashboardResumenWithCases(normalizeDashboardResumen(data));
 }
 
 export async function getCases() {
@@ -690,13 +847,9 @@ function normalizeCasePayload(data = {}) {
   const status = safeString(data.status ?? data.estado, 'Activa').trim();
 
   return {
-    title,
-    titulo: title,
-    description,
+    caratula: title,
     descripcion: description,
-    court,
     juzgado: court,
-    status,
     estado: status,
   };
 }
@@ -717,14 +870,17 @@ export async function createCase(data) {
     return simulateDelay(newCase);
   }
 
-  const payload = normalizeCasePayload(data);
-  const response = await request('/causas', { method: 'POST', body: payload });
+  const endpoint = '/causas';
+  const caseData = normalizeCasePayload(data);
+  console.log('[API] createCase payload:', JSON.stringify(caseData, null, 2));
+  console.log('[API] endpoint:', endpoint);
+  const response = await request(endpoint, { method: 'POST', body: caseData });
   return normalizeCase({
     ...response,
-    title: response?.title ?? payload.title,
-    description: response?.description ?? payload.description,
-    court: response?.court ?? payload.court,
-    status: response?.status ?? payload.status,
+    title: response?.title ?? response?.titulo ?? response?.caratula ?? caseData.caratula,
+    description: response?.description ?? response?.descripcion ?? caseData.descripcion,
+    court: response?.court ?? response?.juzgado ?? caseData.juzgado,
+    status: response?.status ?? response?.estado ?? caseData.estado,
   });
 }
 
@@ -754,10 +910,10 @@ export async function updateCase(id, data) {
   return normalizeCase({
     ...response,
     id,
-    title: response?.title ?? payload.title,
-    description: response?.description ?? payload.description,
-    court: response?.court ?? payload.court,
-    status: response?.status ?? payload.status,
+    title: response?.title ?? response?.titulo ?? response?.caratula ?? payload.caratula,
+    description: response?.description ?? response?.descripcion ?? payload.descripcion,
+    court: response?.court ?? response?.juzgado ?? payload.juzgado,
+    status: response?.status ?? response?.estado ?? payload.estado,
   });
 }
 
@@ -768,7 +924,7 @@ export async function getHearings() {
       normalizeHearing({
         ...item,
         caseTitle: caseMap[item.caseId]?.title || 'Causa sin referencia',
-        court: caseMap[item.caseId]?.court || 'Juzgado a confirmar',
+        court: caseMap[item.caseId]?.court || null,
       })
     );
 
@@ -804,8 +960,8 @@ function normalizeHearingPayload(data = {}) {
     hora: safeString(data.time ?? data.hora, '').trim(),
     caseId,
     causaId: caseId,
-    modality,
-    modalidad: modality,
+    modality: modality || null,
+    modalidad: modality || null,
     location,
     ubicacion: location,
   };
@@ -962,6 +1118,49 @@ export async function getNotifications() {
     return sortByDateDesc(toArray(data).map((item) => normalizeNotification(item)), 'createdAt');
   } catch {
     return [];
+  }
+}
+
+export async function sendLuxMessage(message, context = {}) {
+  const normalizedMessage = safeString(message, '').trim();
+
+  if (!normalizedMessage) {
+    return {
+      success: false,
+      reply: 'Escribe una consulta para que LUX pueda ayudarte.',
+    };
+  }
+
+  try {
+    const data = await request('/lux/chat', {
+      method: 'POST',
+      timeout: LUX_REQUEST_TIMEOUT_MS,
+      timeoutMessage: LUX_TIMEOUT_ERROR_MESSAGE,
+      body: {
+        message: normalizedMessage,
+        context: {
+          screen: 'dashboard',
+          ...context,
+        },
+      },
+    });
+
+    const reply = safeString(data?.reply, LUX_CONNECTION_ERROR_MESSAGE);
+
+    return {
+      success: Boolean(data?.success),
+      reply,
+      raw: data,
+    };
+  } catch (error) {
+    console.error('[LUX] No pudimos conectar con el asistente:', error);
+    const isTimeout = error?.message === LUX_TIMEOUT_ERROR_MESSAGE;
+
+    return {
+      success: false,
+      reply: isTimeout ? LUX_TIMEOUT_ERROR_MESSAGE : LUX_CONNECTION_ERROR_MESSAGE,
+      error,
+    };
   }
 }
 

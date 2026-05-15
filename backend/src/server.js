@@ -1,0 +1,21 @@
+const app = require('./app');
+const luxRoutes = require('./routes/lux.routes');
+const fs = require('fs');
+const path = require('path');
+
+const PORT = Number(process.env.PORT || 3000);
+const apiConfigPath = path.resolve(__dirname, '../../src/config/api.js');
+const apiConfigSource = fs.readFileSync(apiConfigPath, 'utf8');
+const serverIpMatch = apiConfigSource.match(/export\s+const\s+SERVER_IP\s*=\s*['"]([^'"]+)['"]/);
+
+if (!serverIpMatch) {
+  throw new Error('No se encontro SERVER_IP en src/config/api.js');
+}
+
+const PUBLIC_BACKEND_URL = `http://${serverIpMatch[1]}:${PORT}`;
+
+app.use('/api/v1/lux', luxRoutes);
+
+app.listen(PORT, () => {
+  console.log(`Luxia backend escuchando en ${PUBLIC_BACKEND_URL}`);
+});

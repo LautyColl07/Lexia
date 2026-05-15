@@ -29,16 +29,20 @@ export default function NewCaseScreen({ navigation }) {
 
     try {
       setSubmitting(true);
-      await createCase({
+      const payload = {
         title: form.title.trim(),
         description: form.description.trim(),
         court: form.court.trim(),
         status: form.status,
-      });
+      };
+
+      console.log('[NewCaseScreen] Payload creando causa:', JSON.stringify(payload, null, 2));
+      await createCase(payload);
 
       showSuccessAndGoBack(navigation, 'Causa cargada', 'La causa se guardo correctamente.');
     } catch (error) {
       console.error('[NewCaseScreen] Error creando causa:', error);
+      console.error('[NewCaseScreen] Error backend:', error?.response || error?.data || error?.message);
       Alert.alert(
         'No pudimos registrar la causa',
         error instanceof Error ? error.message : 'Intenta nuevamente.'

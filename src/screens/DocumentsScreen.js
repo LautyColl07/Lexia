@@ -8,11 +8,10 @@ import { Alert, FlatList, Linking, Pressable, StyleSheet, Text, View } from 'rea
 import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
 import LoadingState from '../components/LoadingState';
+import { API_ROOT_URL } from '../config/api';
 import { useAppTheme } from '../context/ThemeContext';
 import { getDocuments } from '../services/api';
 import { formatDate } from '../utils/date';
-
-const FILE_BASE_URL = 'http://172.16.4.48:3000';
 
 export default function DocumentsScreen({ navigation }) {
   const { colors } = useAppTheme();
@@ -51,7 +50,7 @@ export default function DocumentsScreen({ navigation }) {
       return null;
     }
 
-    return `${FILE_BASE_URL}${document.path}`;
+    return `${API_ROOT_URL}${document.path}`;
   }, []);
 
   const openDocument = useCallback(async (document) => {

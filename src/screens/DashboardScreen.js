@@ -7,6 +7,8 @@ import EmptyState from '../components/EmptyState';
 import ErrorState from '../components/ErrorState';
 import HearingTimelineCard from '../components/HearingTimelineCard';
 import LoadingState from '../components/LoadingState';
+import LuxAssistantButton from '../components/LuxAssistantButton';
+import LuxAssistantModal from '../components/LuxAssistantModal';
 import MetricCard from '../components/MetricCard';
 import QuickActionButton from '../components/QuickActionButton';
 import { useAuth } from '../context/AuthContext';
@@ -22,6 +24,7 @@ export default function DashboardScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [isLuxVisible, setIsLuxVisible] = useState(false);
 
   const loadDashboard = useCallback(async (isRefresh = false) => {
     if (!isAuthReady) {
@@ -119,6 +122,14 @@ export default function DashboardScreen({ navigation }) {
     [navigation]
   );
 
+  const handleOpenLux = useCallback(() => {
+    setIsLuxVisible(true);
+  }, []);
+
+  const handleCloseLux = useCallback(() => {
+    setIsLuxVisible(false);
+  }, []);
+
   const data = dashboard ?? null;
   const metricas = data?.metricas || {
     causasActivas: 0,
@@ -128,6 +139,12 @@ export default function DashboardScreen({ navigation }) {
   };
   const proximasAudiencias = data?.proximasAudiencias || [];
   const nombreUsuario = data?.usuario?.nombre || 'Usuario';
+  const luxContext = useMemo(
+    () => ({
+      screen: 'dashboard',
+    }),
+    []
+  );
 
   const metricCards = [
     {
@@ -180,112 +197,125 @@ export default function DashboardScreen({ navigation }) {
   }
 
   return (
-    <ScrollView
-      contentContainerStyle={styles.content}
-      refreshControl={
-        <RefreshControl
-          onRefresh={handleRefresh}
-          refreshing={refreshing}
-          tintColor={colors.primary}
-        />
-      }
-      showsVerticalScrollIndicator={false}
-      style={styles.screen}
-    >
-      <View style={styles.hero}>
-        <View style={styles.heroShapeLarge} />
-        <View style={styles.heroShapeSmall} />
+    <View style={styles.root}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            onRefresh={handleRefresh}
+            refreshing={refreshing}
+            tintColor={colors.primary}
+          />
+        }
+        showsVerticalScrollIndicator={false}
+        style={styles.screen}
+      >
+        <View style={styles.hero}>
+          <View style={styles.heroShapeLarge} />
+          <View style={styles.heroShapeSmall} />
 
-        <View style={styles.heroTopRow}>
-          <Text style={styles.brand}>LUXIA</Text>
+          <View style={styles.heroTopRow}>
+            <Text style={styles.brand}>LUXIA</Text>
 
-          <Pressable onPress={handleNotificationsPress} style={styles.notificationButton}>
-            <MaterialCommunityIcons color={colors.textOnPrimary} name="bell-outline" size={24} />
-            {notificationCount > 0 ? (
-              <View style={styles.notificationBadge}>
-                <Text style={styles.notificationBadgeText}>{notificationCount}</Text>
-              </View>
-            ) : null}
+            <Pressable onPress={handleNotificationsPress} style={styles.notificationButton}>
+              <MaterialCommunityIcons color={colors.textOnPrimary} name="bell-outline" size={24} />
+              {notificationCount > 0 ? (
+                <View style={styles.notificationBadge}>
+                  <Text style={styles.notificationBadgeText}>{notificationCount}</Text>
+                </View>
+              ) : null}
+            </Pressable>
+          </View>
+
+          <Text style={styles.greeting}>Hola, {nombreUsuario}</Text>
+          <Text style={styles.subtitle}>
+            Gestiona tus causas, audiencias y documentos desde un solo lugar.
+          </Text>
+        </View>
+
+        <View style={styles.metricGrid}>
+          {metricCards.map((item) => (
+            <View key={item.label} style={styles.metricCell}>
+              <MetricCard {...item} />
+            </View>
+          ))}
+        </View>
+
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionEyebrow}>PROXIMAS AUDIENCIAS</Text>
+          <Pressable onPress={handleOpenCalendar}>
+            <Text style={styles.sectionLink}>Ver calendario</Text>
           </Pressable>
         </View>
 
-        <Text style={styles.greeting}>Hola, {nombreUsuario}</Text>
-        <Text style={styles.subtitle}>
-          Gestiona tus causas, audiencias y documentos desde un solo lugar.
-        </Text>
-      </View>
+        {proximasAudiencias.length ? (
+          proximasAudiencias.map((hearing, index) => {
+            console.log('[Dashboard] audiencia recibida:', JSON.stringify(hearing, null, 2));
 
-      <View style={styles.metricGrid}>
-        {metricCards.map((item) => (
-          <View key={item.label} style={styles.metricCell}>
-            <MetricCard {...item} />
-          </View>
-        ))}
-      </View>
-
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionEyebrow}>PROXIMAS AUDIENCIAS</Text>
-        <Pressable onPress={handleOpenCalendar}>
-          <Text style={styles.sectionLink}>Ver calendario</Text>
-        </Pressable>
-      </View>
-
-      {proximasAudiencias.length ? (
-        proximasAudiencias.map((hearing, index) => (
-          <HearingTimelineCard
-            hearing={hearing}
-            isLast={index === proximasAudiencias.length - 1}
-            key={hearing?.id ?? `${hearing?.title}-${index}`}
-            onPressAction={() => handleOpenHearing(hearing)}
+            return (
+              <HearingTimelineCard
+                hearing={hearing}
+                isLast={index === proximasAudiencias.length - 1}
+                key={hearing?.id ?? `${hearing?.title}-${index}`}
+                onPressAction={() => handleOpenHearing(hearing)}
+              />
+            );
+          })
+        ) : (
+          <EmptyState
+            actionLabel="Programar audiencia"
+            icon="calendar-blank"
+            message="No hay audiencias programadas para los proximos dias."
+            onAction={handleCreateHearing}
+            title="Agenda sin actividad proxima"
           />
-        ))
-      ) : (
-        <EmptyState
-          actionLabel="Programar audiencia"
-          icon="calendar-blank"
-          message="No hay audiencias programadas para los proximos dias."
-          onAction={handleCreateHearing}
-          title="Agenda sin actividad proxima"
-        />
-      )}
+        )}
 
-      <View style={[styles.sectionHeader, styles.quickActionsHeader]}>
-        <Text style={styles.sectionEyebrow}>ACCIONES PRINCIPALES</Text>
-      </View>
-
-      <View style={styles.quickActionsGrid}>
-        <QuickActionButton
-          icon="plus-box-outline"
-          onPress={handleCreateCase}
-          subtitle="Registra un nuevo expediente con sus datos principales."
-          title="Nueva causa"
-        />
-        <QuickActionButton
-          icon="tray-arrow-up"
-          onPress={handleUploadDocument}
-          subtitle="Incorpora escritos, anexos o prueba documental."
-          title="Subir documento"
-        />
-        <QuickActionButton
-          icon="calendar-plus"
-          fullWidth
-          onPress={handleCreateHearing}
-          subtitle="Agenda una audiencia y vinculala a una causa."
-          title="Registrar audiencia"
-        />
-      </View>
-
-      {error ? (
-        <View style={styles.inlineAlert}>
-          <MaterialCommunityIcons color={colors.danger} name="alert-outline" size={18} />
-          <Text style={styles.inlineAlertText}>{error}</Text>
+        <View style={[styles.sectionHeader, styles.quickActionsHeader]}>
+          <Text style={styles.sectionEyebrow}>ACCIONES PRINCIPALES</Text>
         </View>
-      ) : null}
-    </ScrollView>
+
+        <View style={styles.quickActionsGrid}>
+          <QuickActionButton
+            icon="plus-box-outline"
+            onPress={handleCreateCase}
+            subtitle="Registra un nuevo expediente con sus datos principales."
+            title="Nueva causa"
+          />
+          <QuickActionButton
+            icon="tray-arrow-up"
+            onPress={handleUploadDocument}
+            subtitle="Incorpora escritos, anexos o prueba documental."
+            title="Subir documento"
+          />
+          <QuickActionButton
+            icon="calendar-plus"
+            fullWidth
+            onPress={handleCreateHearing}
+            subtitle="Agenda una audiencia y vinculala a una causa."
+            title="Registrar audiencia"
+          />
+        </View>
+
+        {error ? (
+          <View style={styles.inlineAlert}>
+            <MaterialCommunityIcons color={colors.danger} name="alert-outline" size={18} />
+            <Text style={styles.inlineAlertText}>{error}</Text>
+          </View>
+        ) : null}
+      </ScrollView>
+
+      <LuxAssistantButton onPress={handleOpenLux} />
+      <LuxAssistantModal context={luxContext} onClose={handleCloseLux} visible={isLuxVisible} />
+    </View>
   );
 }
 
 const createStyles = (colors) => StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
   screen: {
     flex: 1,
     backgroundColor: colors.background,

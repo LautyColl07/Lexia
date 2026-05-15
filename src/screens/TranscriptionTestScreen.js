@@ -10,9 +10,9 @@ import * as DocumentPicker from 'expo-document-picker';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { AI_BASE_URL, SERVER_IP } from '../config/api';
 import { useAppTheme } from '../context/ThemeContext';
 
-const WHISPER_BASE_URL = 'http://172.16.4.48:5000';
 const DEFAULT_AUDIO_MIME_TYPE = 'audio/m4a';
 const HEALTH_TIMEOUT_MS = 45000;
 const AUDIO_EXTENSION_TO_MIME_TYPE = {
@@ -115,7 +115,7 @@ function buildNetworkErrorMessage(error) {
     }
 
     if (message.includes('network request failed')) {
-      return 'Error de red. Verifica que el dispositivo pueda alcanzar 172.16.4.48.';
+      return `Error de red. Verifica que el dispositivo pueda alcanzar ${SERVER_IP}.`;
     }
 
     if (message.includes('aborted')) {
@@ -169,7 +169,7 @@ export default function TranscriptionTestScreen() {
       setIsCheckingConnection(true);
       setStatusText('Probando conexion con el servidor de transcripcion...');
 
-      const response = await fetchWithTimeout(`${WHISPER_BASE_URL}/api/health`);
+      const response = await fetchWithTimeout(`${AI_BASE_URL}/api/health`);
       const payload = await parseApiResponse(response);
 
       if (!response.ok) {
@@ -338,7 +338,7 @@ export default function TranscriptionTestScreen() {
         type: activeAudio.mimeType || DEFAULT_AUDIO_MIME_TYPE,
       });
 
-      const response = await fetch(`${WHISPER_BASE_URL}/api/transcribir`, {
+      const response = await fetch(`${AI_BASE_URL}/api/transcribir`, {
         body: formData,
         method: 'POST',
       });

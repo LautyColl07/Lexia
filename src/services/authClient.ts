@@ -7,10 +7,11 @@ import {
 } from "firebase/auth";
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 
+import { API_BASE_URL } from "../config/api";
 import { auth, db, isFirebaseConfigured, missingFirebaseKeys } from "../config/firebase";
 
 export type LoginPayload = {
-  email: string;
+  identifier: string;
   password: string;
   rememberMe: boolean;
 };
@@ -47,10 +48,88 @@ const mapFirebaseAuthError = (code: string) => {
   }
 };
 
+type ResolveUserResponse = {
+  success?: boolean;
+  data?: {
+    success?: boolean;
+    email?: string;
+    message?: string;
+  };
+  email?: string;
+  message?: string;
+};
+
+async function readResolveUserResponse(response: Response): Promise<ResolveUserResponse> {
+  try {
+    return (await response.json()) as ResolveUserResponse;
+  } catch {
+    return {};
+  }
+}
+
+function getResolveLoginUrl() {
+  const baseUrl = API_BASE_URL.replace(/\/+$/, "");
+  const path = baseUrl.endsWith("/api/v1")
+    ? "/auth/resolve-login"
+    : "/api/v1/auth/resolve-login";
+
+  return `${baseUrl}${path}`;
+}
+
+async function resolveLoginEmail(identifier: string) {
+  const normalizedIdentifier = identifier.trim();
+
+  if (!normalizedIdentifier) {
+    throw new Error("Completa Email o usuario y la contrasena para continuar.");
+  }
+
+  console.log("[LOGIN] identifier:", normalizedIdentifier);
+
+  if (normalizedIdentifier.includes("@")) {
+    console.log("[LOGIN] email resuelto:", normalizedIdentifier);
+    return normalizedIdentifier;
+  }
+
+  try {
+    console.log("[LOGIN] resolviendo usuario...");
+
+    const response = await fetch(getResolveLoginUrl(), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        identifier: normalizedIdentifier,
+      }),
+    });
+
+    const data = await readResolveUserResponse(response);
+    console.log("[LOGIN] response resolve-login:", data);
+
+    const isSuccess = data.success || data.data?.success;
+    const resolvedEmail = data.email || data.data?.email;
+
+    if (!response.ok || !isSuccess || !resolvedEmail) {
+      throw new Error(
+        data.message || data.data?.message || "No pudimos resolver el usuario ingresado",
+      );
+    }
+
+    const emailToLogin = resolvedEmail.trim();
+    console.log("[LOGIN] email resuelto:", emailToLogin);
+
+    return emailToLogin;
+  } catch (error) {
+    throw error instanceof Error
+      ? error
+      : new Error("No pudimos resolver el usuario ingresado");
+  }
+}
+
 export const authClient = {
   async login(payload: LoginPayload) {
-    if (!payload.email || !payload.password) {
-      throw new Error("Completa el email y la contrasena para continuar.");
+    if (!payload.identifier || !payload.password) {
+      throw new Error("Completa Email o usuario y la contrasena para continuar.");
     }
 
     if (!isFirebaseConfigured || !auth) {
@@ -58,9 +137,11 @@ export const authClient = {
     }
 
     try {
+      const email = await resolveLoginEmail(payload.identifier);
+
       const credential = await signInWithEmailAndPassword(
         auth,
-        payload.email.trim(),
+        email,
         payload.password,
       );
 

@@ -4,6 +4,7 @@ require('dotenv').config({ path: path.resolve(__dirname, '../.env'), quiet: true
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env'), override: false, quiet: true });
 
 const app = require('./app');
+const authRoutes = require('./routes/auth.routes');
 const luxRoutes = require('./routes/lux.routes');
 const transcriptionRoutes = require('./routes/transcription.routes');
 
@@ -18,6 +19,7 @@ if (!serverIpMatch) {
 
 const PUBLIC_BACKEND_URL = `http://${serverIpMatch[1]}:${PORT}`;
 
+app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/lux', luxRoutes);
 app.use('/api/v1/transcriptions', transcriptionRoutes);
 

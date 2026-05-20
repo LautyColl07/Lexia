@@ -16,22 +16,22 @@ import { User, Lock, Eye, EyeOff, HelpCircle } from "lucide-react-native";
 import { authClient } from "../services/authClient";
 
 export default function LoginScreen({ navigation }: any) {
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
-  const [emailError, setEmailError] = useState("");
+  const [identifierError, setIdentifierError] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
   const validateForm = () => {
     let isValid = true;
 
-    setEmailError("");
+    setIdentifierError("");
     setPasswordError("");
 
-    if (!email.trim()) {
-      setEmailError("Este campo es obligatorio");
+    if (!identifier.trim()) {
+      setIdentifierError("Ingresa tu email o usuario");
       isValid = false;
     }
 
@@ -52,7 +52,7 @@ export default function LoginScreen({ navigation }: any) {
       setIsLoading(true);
 
       await authClient.login({
-        email: email.trim(),
+        identifier: identifier.trim(),
         password,
         rememberMe,
       });
@@ -89,20 +89,20 @@ export default function LoginScreen({ navigation }: any) {
 
             <View style={styles.form}>
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Correo electronico</Text>
+                <Text style={styles.label}>Email o usuario</Text>
 
                 <View
                   style={[
                     styles.inputWrapper,
-                    emailError ? styles.inputError : null,
+                    identifierError ? styles.inputError : null,
                   ]}
                 >
                   <User size={20} color="#5B6776" style={styles.icon} />
 
                   <TextInput
-                    value={email}
-                    onChangeText={setEmail}
-                    placeholder="tu.email@estudio.com"
+                    value={identifier}
+                    onChangeText={setIdentifier}
+                    placeholder="Email o usuario"
                     placeholderTextColor="#5B6776"
                     keyboardType="email-address"
                     autoCapitalize="none"
@@ -111,8 +111,8 @@ export default function LoginScreen({ navigation }: any) {
                   />
                 </View>
 
-                {emailError ? (
-                  <Text style={styles.errorText}>{emailError}</Text>
+                {identifierError ? (
+                  <Text style={styles.errorText}>{identifierError}</Text>
                 ) : null}
               </View>
 
